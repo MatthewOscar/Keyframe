@@ -250,11 +250,12 @@ def test_extract_ocr_reconstructs_indentation_from_word_geometry(
     }
     observed: dict[str, object] = {}
 
-    def fake_image_to_data(*_args: object, **kwargs: object) -> bytes:
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        observed["command"] = command
         observed.update(kwargs)
-        return _tsv_bytes(data)
+        return subprocess.CompletedProcess(command, 0, _tsv_bytes(data), b"")
 
-    monkeypatch.setattr("video_context_mcp.vision.pytesseract.image_to_data", fake_image_to_data)
+    monkeypatch.setattr("video_context_mcp.vision.subprocess.run", fake_run)
 
     result = extract_ocr(Image.new("RGB", (100, 60), "white"))
 
@@ -264,7 +265,11 @@ def test_extract_ocr_reconstructs_indentation_from_word_geometry(
     assert result.confidence == pytest.approx(0.93)
     assert all(0.0 <= line.confidence <= 1.0 for line in result.lines)
     assert observed["timeout"] == 30.0
-    assert observed["output_type"] == "bytes"
+    assert observed["capture_output"] is True
+    assert isinstance(observed["input"], bytes)
+    assert observed["input"].startswith(b"\x89PNG\r\n\x1a\n")
+    assert observed["command"][1:3] == ["stdin", "stdout"]
+    assert observed["command"][-3:] == ["--psm", "6", "tsv"]
 
 
 def test_extract_ocr_replaces_invalid_utf8_in_untrusted_tsv(
@@ -284,8 +289,8 @@ def test_extract_ocr_replaces_invalid_utf8_in_untrusted_tsv(
     }
     malformed = _tsv_bytes(data).replace(b"slugify", b"slug\x89ify")
     monkeypatch.setattr(
-        "video_context_mcp.vision.pytesseract.image_to_data",
-        lambda *_args, **_kwargs: malformed,
+        "video_context_mcp.vision.subprocess.run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, malformed, b""),
     )
 
     result = extract_ocr(Image.new("RGB", (100, 60), "white"))
@@ -297,12 +302,24 @@ def test_extract_ocr_surfaces_tesseract_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def timeout(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("Tesseract process timeout")
+        raise subprocess.TimeoutExpired("tesseract", 2)
 
-    monkeypatch.setattr("video_context_mcp.vision.pytesseract.image_to_data", timeout)
+    monkeypatch.setattr("video_context_mcp.vision.subprocess.run", timeout)
 
     with pytest.raises(ExtractionError, match=r"timed out after 2s.*one frame"):
         extract_ocr(Image.new("RGB", (100, 60), "white"), timeout_s=2)
+
+
+def test_extract_ocr_replaces_invalid_utf8_in_native_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "video_context_mcp.vision.subprocess.run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 1, b"", b"bad \x89"),
+    )
+
+    with pytest.raises(ExtractionError, match="bad \ufffd"):
+        extract_ocr(Image.new("RGB", (100, 60), "white"))
 
 
 @pytest.mark.parametrize(

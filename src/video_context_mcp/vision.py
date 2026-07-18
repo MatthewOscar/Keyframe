@@ -11,7 +11,9 @@ import ast
 import io
 import json
 import math
+import os
 import re
+import shlex
 import statistics
 import subprocess
 import tempfile
@@ -25,7 +27,6 @@ from typing import Literal, cast
 import cv2
 import imagehash
 import numpy as np
-import pytesseract  # type: ignore[import-untyped]
 from numpy.typing import NDArray
 from PIL import Image, ImageOps
 
@@ -516,6 +517,75 @@ def _join_words(words: Sequence[_OCRWord], median_glyph_width: float) -> str:
     return "".join(pieces)
 
 
+def _run_tesseract_tsv(
+    image: Image.Image,
+    *,
+    tesseract_binary: str,
+    tesseract_config: str,
+    timeout_s: float,
+) -> bytes:
+    """Run Tesseract directly so all untrusted native output stays byte-oriented."""
+
+    try:
+        config_args = shlex.split(tesseract_config, posix=os.name != "nt")
+    except ValueError as exc:
+        raise ExtractionError(f"Invalid Tesseract configuration: {exc}") from exc
+    encoded = io.BytesIO()
+    try:
+        image.save(encoded, format="PNG", optimize=False)
+    except (OSError, ValueError) as exc:
+        raise ExtractionError(f"Could not prepare a frame for Tesseract OCR: {exc}") from exc
+    command = [tesseract_binary, "stdin", "stdout", *config_args, "tsv"]
+    try:
+        completed = subprocess.run(
+            command,
+            input=encoded.getvalue(),
+            capture_output=True,
+            check=False,
+            timeout=timeout_s,
+        )
+    except FileNotFoundError as exc:
+        raise ExtractionError(
+            "Tesseract was not found; install Tesseract 5 and ensure it is on PATH"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ExtractionError(
+            f"Tesseract OCR timed out after {timeout_s:.0f}s for one frame; "
+            "retry with a shorter or lower-resolution source"
+        ) from exc
+    except OSError as exc:
+        raise ExtractionError(f"Could not start Tesseract OCR: {exc}") from exc
+    if completed.returncode != 0:
+        detail_bytes = completed.stderr or completed.stdout
+        detail = detail_bytes.decode("utf-8", errors="replace").strip()
+        raise ExtractionError(
+            f"Tesseract OCR failed: {(detail or 'no diagnostic output')[-2_000:]}"
+        )
+    return completed.stdout
+
+
+def _parse_tesseract_tsv(payload: bytes) -> Mapping[str, Sequence[object]]:
+    document = payload.decode("utf-8", errors="replace")
+    lines = document.splitlines()
+    if not lines:
+        return {}
+    headers = lines[0].split("\t")
+    if not headers or any(not header for header in headers) or len(headers) != len(set(headers)):
+        raise ExtractionError("Tesseract returned a malformed TSV header")
+    columns: dict[str, list[object]] = {header: [] for header in headers}
+    for line in lines[1:]:
+        if not line:
+            continue
+        values = line.split("\t")
+        if len(values) < len(headers):
+            values.extend("" for _ in range(len(headers) - len(values)))
+        elif len(values) > len(headers):
+            values = [*values[: len(headers) - 1], "\t".join(values[len(headers) - 1 :])]
+        for header, value in zip(headers, values, strict=True):
+            columns[header].append(value)
+    return columns
+
+
 def extract_ocr(
     image: Image.Image | Path,
     *,
@@ -530,33 +600,13 @@ def extract_ocr(
         raise ValueError("timeout_s must be a positive finite number")
     source = _open_image(image)
     prepared = preprocess_for_ocr(source, threshold_method=threshold_method)
-    try:
-        pytesseract.pytesseract.tesseract_cmd = tesseract_binary
-        payload = pytesseract.image_to_data(
-            prepared,
-            output_type=pytesseract.Output.BYTES,
-            config=tesseract_config,
-            timeout=timeout_s,
-        )
-    except pytesseract.TesseractNotFoundError as exc:
-        raise ExtractionError(
-            "Tesseract was not found; install Tesseract 5 and ensure it is on PATH"
-        ) from exc
-    except RuntimeError as exc:
-        if "timeout" in str(exc).lower():
-            raise ExtractionError(
-                f"Tesseract OCR timed out after {timeout_s:.0f}s for one frame; "
-                "retry with a shorter or lower-resolution source"
-            ) from exc
-        raise ExtractionError(f"Tesseract OCR failed: {exc}") from exc
-    except (pytesseract.TesseractError, OSError) as exc:
-        raise ExtractionError(f"Tesseract OCR failed: {exc}") from exc
-
-    if not isinstance(payload, bytes):
-        raise ExtractionError("Tesseract returned an unexpected non-byte TSV document")
-    document = payload.decode("utf-8", errors="replace")
-    raw = pytesseract.pytesseract.file_to_dict(document, "\t", -1)
-    data = cast(Mapping[str, Sequence[object]], raw)
+    payload = _run_tesseract_tsv(
+        prepared,
+        tesseract_binary=tesseract_binary,
+        tesseract_config=tesseract_config,
+        timeout_s=timeout_s,
+    )
+    data = _parse_tesseract_tsv(payload)
     text_values = data.get("text")
     if text_values is None:
         raise ExtractionError("Tesseract returned a malformed 'text' column")
