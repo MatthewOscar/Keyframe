@@ -1,0 +1,72 @@
+Keyframe third-party notices
+============================
+
+Keyframe's own source is licensed under Apache-2.0. Dependencies and media are
+not relicensed by the Keyframe project.
+
+External runtime tools
+----------------------
+
+Keyframe invokes these separately installed tools and does not vendor them:
+
+* FFmpeg / ffprobe — https://ffmpeg.org/legal.html
+  Licensing depends on how the installed FFmpeg build was configured.
+* Tesseract OCR — https://github.com/tesseract-ocr/tesseract
+* Node.js — https://github.com/nodejs/node/blob/main/LICENSE
+
+Python dependencies
+-------------------
+
+Python packages are resolved from the locked project metadata and are not
+vendored into this repository. Each installed distribution retains its own
+license and notices. In particular, Keyframe uses yt-dlp as its upstream media
+extraction library:
+
+* yt-dlp — https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE
+
+Release builders must inspect the final wheel/sdist dependency metadata and
+preserve any notices required by the exact locked versions and optional extras.
+
+Demo and test media
+-------------------
+
+No third-party source video or audio file is included in this repository as of 2026-07-18.
+The repository does include `tests/fixtures/keyframe-synthetic.mp4`, a
+first-party, programmatically generated 10-second video made solely from
+Keyframe-owned text and shapes. Its generator, adjacent WebVTT captions,
+golden metadata, and derived test output are Apache-2.0 project material. The
+source fixture under `examples/demo_target` is first-party project material as
+well.
+
+The optional derived public-video sample under
+`samples/4geeks-function-tutorial/` comes from:
+
+* “11 How to declare a new function - Python Tutorial for Beginners
+  (Interactive and Auto-graded)” by 4Geeks Academy
+* Source: https://www.youtube.com/watch?v=XazswkTqKJI
+* Uploaded: 2020-04-19; metadata obtained: 2026-07-18
+* License: Creative Commons Attribution 3.0 Unported
+  (https://creativecommons.org/licenses/by/3.0/)
+
+Keyframe retained only timestamped captions, OCR, representative frames, and a
+SQLite search index; temporary source media was removed. Those derived assets
+remain CC BY 3.0 material and are expressly excluded from Keyframe's
+Apache-2.0 software license. Full attribution, provenance, modifications, and
+audit caveats are recorded beside the sample.
+
+Before adding any media or derived frame/transcript cache, record all of the
+following in this file:
+
+* asset title and filename;
+* creator and copyright holder;
+* canonical source URL;
+* exact license name/version and license URL;
+* date obtained;
+* modifications and generated derivatives;
+* required attribution text; and
+* locations of the original and every redistributed derivative.
+
+Use only first-party material, CC0/public-domain material, or media with an
+explicit redistribution and adaptation grant such as CC BY. Audit embedded
+music, logos, code, personal information, and other third-party material
+separately. Do not add an asset merely because it is publicly viewable.

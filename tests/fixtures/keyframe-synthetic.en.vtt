@@ -1,0 +1,10 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:03.000
+This first-party fixture introduces Keyframe local video retrieval.
+
+00:00:03.000 --> 00:00:07.000
+Define slugify title by trimming and lowercasing the value, then normalizing non-alphanumeric separators into hyphens.
+
+00:00:07.000 --> 00:00:10.000
+Run pytest to verify the helper with a focused regression test.

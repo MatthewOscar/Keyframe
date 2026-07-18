@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "keyframe": {
+      "command": "uvx",
+      "args": [
+        "--python",
+        "3.12",
+        "--from",
+        "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.0",
+        "video-context-mcp"
+      ],
+      "startup_timeout_sec": 180,
+      "tool_timeout_sec": 1900
+    }
+  }
+}
