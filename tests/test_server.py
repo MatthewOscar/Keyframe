@@ -143,7 +143,13 @@ async def test_structured_search_result() -> None:
     )
     unstructured, structured = result
     assert unstructured
-    assert structured == {"query": "python", "hits": [], "next_cursor": None, "has_more": False}
+    assert structured == {
+        "query": "python",
+        "hits": [],
+        "visual_coverage": None,
+        "next_cursor": None,
+        "has_more": False,
+    }
 
 
 @pytest.mark.asyncio

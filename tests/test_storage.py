@@ -14,6 +14,7 @@ from video_context_mcp.models import (
     SearchChannel,
     TranscriptSegment,
     VideoRecord,
+    VisualCoverage,
     VisualMoment,
 )
 from video_context_mcp.storage import KeyframeStore
@@ -38,6 +39,7 @@ def sample_video() -> VideoRecord:
         chapters=(Chapter(start_s=0, end_s=10, title="Demo"),),
         has_transcript=True,
         indexed_mode=IngestMode.FULL,
+        visual_coverage=VisualCoverage.FULL,
         keyframe_count=1,
         warnings=(),
         local_source_path="/tmp/demo.mp4",
@@ -79,6 +81,7 @@ def test_round_trip_and_unified_search(store: KeyframeStore) -> None:
 
     video = store.get_video("file_deadbeef")
     assert video is not None and video.title == "Exception tutorial"
+    assert video.visual_coverage is VisualCoverage.FULL
     assert store.find_by_fingerprint(video.source_fingerprint) == video
 
     said, said_more = store.search(
@@ -95,6 +98,110 @@ def test_round_trip_and_unified_search(store: KeyframeStore) -> None:
     assert not shown_more and shown[0].moment_id == sample_moment().moment_id
 
 
+@pytest.mark.parametrize(
+    ("coverage", "indexed_mode"),
+    (
+        (VisualCoverage.NONE, IngestMode.FAST),
+        (VisualCoverage.PROBE, IngestMode.FAST),
+        (VisualCoverage.FULL, IngestMode.FULL),
+    ),
+)
+def test_visual_coverage_round_trip(
+    store: KeyframeStore,
+    coverage: VisualCoverage,
+    indexed_mode: IngestMode,
+) -> None:
+    video = sample_video().model_copy(
+        update={
+            "indexed_mode": indexed_mode,
+            "visual_coverage": coverage,
+            "keyframe_count": 0,
+        }
+    )
+
+    store.save_video(video, (), ())
+
+    persisted = store.get_video(video.video_id)
+    assert persisted is not None
+    assert persisted.indexed_mode is indexed_mode
+    assert persisted.visual_coverage is coverage
+
+
+def test_v3_migration_maps_legacy_visual_coverage_honestly_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "legacy-v3.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO metadata(key, value) VALUES('schema_version', '3');
+
+            CREATE TABLE videos (
+                video_id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                availability TEXT NOT NULL,
+                source_fingerprint TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                duration_s REAL NOT NULL CHECK(duration_s >= 0),
+                chapters_json TEXT NOT NULL,
+                has_transcript INTEGER NOT NULL,
+                transcript_mode TEXT NOT NULL,
+                indexed_mode TEXT NOT NULL,
+                keyframe_count INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                warnings_json TEXT NOT NULL,
+                local_source_path TEXT,
+                local_source_size INTEGER,
+                local_source_mtime_ns INTEGER,
+                pipeline_version TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            INSERT INTO videos(
+                video_id, source, source_kind, availability, source_fingerprint,
+                title, duration_s, chapters_json, has_transcript, transcript_mode,
+                indexed_mode, keyframe_count, status, warnings_json, pipeline_version
+            ) VALUES
+                (
+                    'legacy-fast', '/tmp/fast.mp4', 'local', 'local',
+                    'sha256:fast:pipeline:1', 'Legacy fast', 10, '[]', 1,
+                    'captions', 'fast', 0, 'ready', '[]', '1'
+                ),
+                (
+                    'legacy-full', '/tmp/full.mp4', 'local', 'local',
+                    'sha256:full:pipeline:1', 'Legacy full', 10, '[]', 1,
+                    'captions', 'full', 0, 'ready', '[]', '1'
+                );
+            """
+        )
+
+    store = KeyframeStore(database_path)
+    store.initialize()
+    store.initialize()
+
+    legacy_fast = store.get_video("legacy-fast")
+    legacy_full = store.get_video("legacy-full")
+    assert legacy_fast is not None
+    assert legacy_full is not None
+    assert legacy_fast.visual_coverage is VisualCoverage.NONE
+    assert legacy_full.visual_coverage is VisualCoverage.FULL
+
+    with sqlite3.connect(database_path) as connection:
+        version = connection.execute(
+            "SELECT value FROM metadata WHERE key = 'schema_version'"
+        ).fetchone()
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(videos)")]
+
+    assert version == ("4",)
+    assert columns.count("visual_coverage") == 1
+
+
 def test_save_replaces_old_fts_entries(store: KeyframeStore) -> None:
     store.save_video(sample_video(), [sample_segment()], [sample_moment()])
     replacement = sample_segment().model_copy(update={"text": "brand new transcript"})
@@ -108,6 +215,56 @@ def test_save_replaces_old_fts_entries(store: KeyframeStore) -> None:
     )
     assert old_hits == []
     assert len(new_hits) == 1
+
+
+def test_full_save_replaces_probe_moments_and_shown_fts(store: KeyframeStore) -> None:
+    probe_video = sample_video().model_copy(
+        update={
+            "indexed_mode": IngestMode.FAST,
+            "visual_coverage": VisualCoverage.PROBE,
+        }
+    )
+    probe_moment = sample_moment().model_copy(
+        update={
+            "moment_id": "file_deadbeef:m:probe:0",
+            "ocr_text": "probesentinel",
+            "code": "probesentinel",
+        }
+    )
+    store.save_video(probe_video, [sample_segment()], [probe_moment])
+
+    full_video = sample_video()
+    full_moment = sample_moment().model_copy(
+        update={
+            "moment_id": "file_deadbeef:m:full:0",
+            "ocr_text": "fullsentinel",
+            "code": "fullsentinel",
+        }
+    )
+    store.save_video(full_video, [sample_segment()], [full_moment])
+
+    persisted = store.get_video(full_video.video_id)
+    assert persisted is not None
+    assert persisted.visual_coverage is VisualCoverage.FULL
+    assert store.moments_for_video(full_video.video_id) == [full_moment]
+    assert store.get_moment(probe_moment.moment_id) is None
+
+    old_hits, _ = store.search(
+        "probesentinel",
+        video_id=full_video.video_id,
+        channel=SearchChannel.SHOWN,
+        offset=0,
+        limit=10,
+    )
+    new_hits, _ = store.search(
+        "fullsentinel",
+        video_id=full_video.video_id,
+        channel=SearchChannel.SHOWN,
+        offset=0,
+        limit=10,
+    )
+    assert old_hits == []
+    assert [hit.moment_id for hit in new_hits] == [full_moment.moment_id]
 
 
 def test_pages_and_nearest_moment(store: KeyframeStore) -> None:

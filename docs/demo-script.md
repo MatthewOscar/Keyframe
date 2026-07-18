@@ -27,22 +27,26 @@ first-party synthetic fixture from its prepared public YouTube upload in fast
 mode. Keep the URL and returned metadata visible.
 
 **Voiceover:** “One isolated `uvx` command checks the native tools. I give
-Keyframe a public tutorial URL; fast mode captures metadata and captions first.
-A repeated ingest reuses the cache.”
+Keyframe a public tutorial URL; fast mode captures captions plus a bounded
+visual probe, then reports that its coverage is partial. A repeated ingest
+reuses the cache.”
 
 ## 0:52–1:18 — Search “said” versus “shown”
 
-**On screen:** Search the same concept first with `channel="said"`, then
-`channel="shown"`. Highlight different timestamped hits.
+**On screen:** List the sparse probe inventory without loading its images.
+Search the same concept first with `channel="said"`, then `channel="shown"`.
+Highlight different timestamped hits and `visual_coverage="probe"`.
 
 **Voiceover:** “The spoken explanation and the on-screen implementation are
-separate search channels. When the visual index is needed, the skill escalates
-to full ingestion, samples frames, groups stable scenes, and indexes OCR.”
+separate search channels. The scout tells the skill when captions are not
+enough; for this code sequence it escalates to full ingestion, groups stable
+scenes, and replaces the partial visual index atomically.”
 
 ## 1:18–1:44 — Verify code visually
 
-**On screen:** Open the best `video_get_code` result. Show structured OCR,
-confidence/parse status, timestamp, and attached crop together.
+**On screen:** Show the full ingest response with `visual_coverage="full"`, then
+repeat the shown search and use its fresh `moment_id` with `video_get_code`.
+Show structured OCR, confidence/parse status, timestamp, and crop together.
 
 **Voiceover:** “OCR is never presented as ground truth. Keyframe returns the
 reconstructed code and its source crop, so Codex can inspect low confidence or
@@ -83,5 +87,8 @@ what was shown, and ship what was taught.”
   attach `keyframe-synthetic.en.vtt` as its English captions. Keep the local
   fixture as the identical fallback.
 - Zoom the terminal and crop notifications that expose usernames or paths.
+- Preflight every transcript, OCR preview, and selected frame for credentials;
+  Keyframe does not automatically redact them. If any appear, replace the
+  fixture and rotate the exposed value before recording.
 - Record a clean run before editing the script around observed timings.
 - Keep the final upload public, narrated, and no longer than 2:59.

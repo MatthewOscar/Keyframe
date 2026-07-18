@@ -19,6 +19,7 @@ from video_context_mcp.models import (
     MomentKind,
     SearchChannel,
     TranscriptMode,
+    VisualCoverage,
 )
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -109,6 +110,7 @@ def test_full_local_video_rag_round_trip_and_persistent_cache(tmp_path: Path) ->
     assert ingested.video_id == golden["video_id"]
     assert ingested.title == golden["metadata"]["title"]
     assert ingested.indexed_mode is IngestMode.FULL
+    assert ingested.visual_coverage is VisualCoverage.FULL
     assert ingested.cache_hit is False
     assert ingested.has_transcript is True
     assert ingested.keyframe_count >= 3

@@ -133,14 +133,21 @@ Retrieve the strongest code moment, verify low-confidence text against its
 frame, then implement the pattern in examples/demo_target and cite timestamps.
 ```
 
-Fast mode is the economical first pass. Use full mode only when the question
-depends on OCR, code, diagrams, terminal output, slides, or exact frames.
+Fast mode is the economical first request. A fresh fast-only index stores any
+available transcript and a bounded visual probe of at most 12 representative
+frames; a cache hit can already return full coverage. Branch on the returned
+`has_transcript` and `visual_coverage`. The probe makes visual dependencies
+discoverable without pretending to cover every screen state.
+Inspect its moment summaries before deciding captions are sufficient. Upgrade
+to full mode for visual sequences, probe gaps, uncertain OCR, or claims that
+something never appeared; a single decisive probe frame may be enough for one
+targeted fact.
 
 ### MCP tools
 
 | Tool | Purpose |
 | --- | --- |
-| `video_ingest` | Index one local or public video in `fast` or `full` mode, using captions, optional Whisper, or no transcript. |
+| `video_ingest` | Index one local or public video using a sparse fast visual probe or full 1 FPS analysis, with captions, optional Whisper, or no transcript. |
 | `video_get_transcript` | Page through timestamped transcript segments, optionally within a time range. |
 | `video_search` | Rank matching `said`, `shown`, or combined evidence across one video or the local library. |
 | `video_list_moments` | Page through retained moments filtered by code, terminal, slide, diagram, other, or any. |
@@ -159,11 +166,15 @@ pagination, visual-result behavior, and expected errors.
 ```mermaid
 flowchart LR
     A[Local file / public URL] --> B[FFmpeg + yt-dlp]
-    B --> C[Captions / optional Whisper]
-    B --> D[1 FPS frame sampling]
+    B --> C[Captions]
+    B --> W[Isolated optional Whisper worker]
+    B --> P[Fast: bounded visual probe]
+    B --> D[Full: 1 FPS frame sampling]
     D --> E[Adjacent-frame grouping]
-    E --> F[Stability + OCR + classification]
+    P --> F[Bounded parallel OCR + classification]
+    E --> F[Bounded parallel OCR + classification]
     C --> G[(SQLite + FTS5)]
+    W --> G
     F --> G
     G --> H[Six MCP tools]
     H --> I[Keyframe workflow skill]
@@ -174,6 +185,13 @@ Remote media is downloaded to a temporary workspace. A successful ingest
 atomically publishes derived transcript, OCR, metadata, and representative
 frames to the cache, then removes the downloaded source. Failed ingests do not
 publish partial records.
+
+When captions are unavailable, Keyframe overlaps the isolated Whisper worker
+with either sparse-probe or full visual extraction, analyzes retained frames
+with at most two OCR workers by default, then joins both branches before the
+single atomic commit. The process boundary also prevents faster-whisper's PyAV
+libraries from sharing an address space with OpenCV's bundled FFmpeg libraries
+on macOS.
 
 ## Local data and privacy
 
@@ -186,6 +204,9 @@ publish partial records.
   instructions.
 - Evidence returned to Codex or ChatGPT becomes model input and follows the
   user's OpenAI data controls.
+- Keyframe does not automatically detect or redact credentials in OCR, search
+  snippets, reconstructed code, or images. Use recordings safe for model input
+  and review selected evidence before retrieving sensitive screens.
 - Keyframe has no analytics, accounts, hosted backend, or embedded model call.
 
 ## Current limits
@@ -195,8 +216,10 @@ publish partial records.
   scope.
 - The default duration guard is 30 minutes; callers must explicitly raise it
   for longer inputs.
-- Sampling at 1 FPS can miss very brief visual changes. Retained timestamps use
-  decoded presentation times rather than an inferred frame index.
+- Fast coverage is intentionally sparse; a missing probe hit is not proof that
+  content was absent. Full sampling at 1 FPS can still miss very brief visual
+  changes. Retained timestamps use decoded presentation times rather than an
+  inferred frame index.
 - Native media/OCR operations have bounded timeouts and fail actionably on
   malformed or unusually slow inputs.
 - OCR can confuse glyphs and infer indentation incorrectly. Python, JSON, and
@@ -206,7 +229,8 @@ publish partial records.
 - Remote formats must be downloadable through Keyframe's validated in-process
   HTTP, native HLS, or DASH transport. Formats that require FFmpeg, RTMP, or
   another external process to make network connections are rejected.
-- Whisper is optional and can be resource intensive on CPU-only machines.
+- Whisper is optional and can be resource intensive on CPU-only machines. Its
+  first use may also download the configured model before ingestion begins.
 - Windows support is preview-level in v0.1.0.
 
 ## Build Week and GPT-5.6

@@ -53,6 +53,7 @@ _SOCKET_DEFAULT_TIMEOUT: Any = socket._GLOBAL_DEFAULT_TIMEOUT  # type: ignore[at
 type AcquisitionMode = Literal["fast", "full"]
 type TranscriptMode = Literal["auto", "captions", "whisper", "none"]
 type Availability = Literal["local", "public", "unlisted"]
+type MediaProfile = Literal["probe_video", "probe_av", "full_av"]
 
 _SUBTITLE_EXTENSIONS = {".srt", ".vtt"}
 _TEXT_SUBTITLE_CODECS = {
@@ -1395,11 +1396,18 @@ def _download_remote_media(
     *,
     refresh: bool,
     temp_dir: Path,
+    profile: MediaProfile,
 ) -> tuple[Path, Mapping[str, Any]]:
     options = _base_ydl_options(settings, refresh=refresh)
+    if profile == "probe_video":
+        format_selector = "bestvideo[height<=360]/best[height<=360]/worstvideo/worst"
+    elif profile == "probe_av":
+        format_selector = "best[height<=360]/worst"
+    else:
+        format_selector = "bv*+ba/b"
     options.update(
         {
-            "format": "bv*+ba/b",
+            "format": format_selector,
             "max_filesize": settings.max_remote_file_bytes,
             "merge_output_format": "mp4",
             "outtmpl": str(temp_dir / "source.%(ext)s"),
@@ -1506,11 +1514,11 @@ def acquire_remote(
     max_duration_s: int | None = None,
     refresh: bool = False,
 ) -> AcquiredSource:
-    """Acquire public remote metadata/captions and, when needed, media.
+    """Acquire public remote metadata/captions and bounded visual media.
 
-    The first yt-dlp pass is metadata-only.  Media is downloaded only for full
-    visual indexing or explicit Whisper transcription, and only after restrictions
-    and the duration cap have passed.
+    The first yt-dlp pass is metadata-only. Fast mode then downloads a low-resolution
+    probe stream; full mode downloads the normal extraction stream. Both happen only
+    after restrictions and the duration cap have passed.
     """
 
     _validate_modes(mode, transcript_mode)
@@ -1566,21 +1574,31 @@ def acquire_remote(
     temp_dir: Path | None = None
     media_path: Path | None = None
     try:
-        if mode == "full" or transcript_mode == "whisper":
-            settings.ensure_directories()
-            temp_dir = Path(tempfile.mkdtemp(prefix="acquire-", dir=settings.tmp_dir))
-            media_path, downloaded_info = _download_remote_media(
-                validated_source,
-                settings,
-                refresh=refresh,
-                temp_dir=temp_dir,
-            )
-            # Defend against a provider changing the result between metadata and download.
-            _assert_same_remote_identity(info, downloaded_info)
-            _validate_remote_info(downloaded_info, settings, max_duration_s=limit)
-            if kind is SourceKind.DIRECT:
-                _validate_reported_direct_urls(downloaded_info, settings)
-            _probe_downloaded_media(media_path, settings, max_duration_s=limit)
+        settings.ensure_directories()
+        temp_dir = Path(tempfile.mkdtemp(prefix="acquire-", dir=settings.tmp_dir))
+        needs_probe_audio = transcript_mode == "whisper" or (
+            transcript_mode == "auto" and not transcript
+        )
+        profile: MediaProfile
+        if mode == "full":
+            profile = "full_av"
+        elif needs_probe_audio:
+            profile = "probe_av"
+        else:
+            profile = "probe_video"
+        media_path, downloaded_info = _download_remote_media(
+            validated_source,
+            settings,
+            refresh=refresh,
+            temp_dir=temp_dir,
+            profile=profile,
+        )
+        # Defend against a provider changing the result between metadata and download.
+        _assert_same_remote_identity(info, downloaded_info)
+        _validate_remote_info(downloaded_info, settings, max_duration_s=limit)
+        if kind is SourceKind.DIRECT:
+            _validate_reported_direct_urls(downloaded_info, settings)
+        _probe_downloaded_media(media_path, settings, max_duration_s=limit)
 
         return AcquiredSource(
             metadata=_remote_metadata(validated_source, kind, info, duration=duration),

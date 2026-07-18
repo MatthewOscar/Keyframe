@@ -17,10 +17,11 @@ from video_context_mcp.models import (
     TranscriptMode,
     TranscriptSegment,
     VideoRecord,
+    VisualCoverage,
     VisualMoment,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 _TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
 
 
@@ -58,6 +59,7 @@ class KeyframeStore:
                     has_transcript INTEGER NOT NULL,
                     transcript_mode TEXT NOT NULL,
                     indexed_mode TEXT NOT NULL,
+                    visual_coverage TEXT NOT NULL,
                     keyframe_count INTEGER NOT NULL,
                     status TEXT NOT NULL,
                     warnings_json TEXT NOT NULL,
@@ -129,15 +131,41 @@ class KeyframeStore:
                     "INSERT INTO metadata(key, value) VALUES('schema_version', ?)",
                     (str(SCHEMA_VERSION),),
                 )
-            elif int(version["value"]) == 1:
-                self._migrate_v1_to_v2(connection)
-                self._migrate_v2_to_v3(connection)
-            elif int(version["value"]) == 2:
-                self._migrate_v2_to_v3(connection)
-            elif int(version["value"]) != SCHEMA_VERSION:
-                raise CacheError(
-                    f"Unsupported Keyframe cache schema {version['value']}; expected {SCHEMA_VERSION}."
-                )
+            else:
+                current_version = int(version["value"])
+                if current_version == 1:
+                    self._migrate_v1_to_v2(connection)
+                    current_version = 2
+                if current_version == 2:
+                    self._migrate_v2_to_v3(connection)
+                    current_version = 3
+                if current_version == 3:
+                    self._migrate_v3_to_v4(connection)
+                    current_version = 4
+                if current_version != SCHEMA_VERSION:
+                    raise CacheError(
+                        f"Unsupported Keyframe cache schema {version['value']}; expected "
+                        f"{SCHEMA_VERSION}."
+                    )
+
+    @staticmethod
+    def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+        """Record whether visuals are absent, sparsely probed, or fully indexed."""
+
+        video_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(videos)").fetchall()
+        }
+        if "visual_coverage" not in video_columns:
+            connection.execute(
+                "ALTER TABLE videos ADD COLUMN visual_coverage TEXT NOT NULL DEFAULT 'none'"
+            )
+            connection.execute(
+                "UPDATE videos SET visual_coverage = 'full' WHERE indexed_mode = 'full'"
+            )
+        connection.execute(
+            "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
+            (str(SCHEMA_VERSION),),
+        )
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -179,7 +207,7 @@ class KeyframeStore:
             )
         connection.execute(
             "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
-            (str(SCHEMA_VERSION),),
+            ("3",),
         )
 
     @contextmanager
@@ -313,11 +341,11 @@ class KeyframeStore:
                 """
                 INSERT INTO videos(
                     video_id, source, source_kind, availability, source_fingerprint, title, duration_s,
-                    chapters_json, has_transcript, transcript_mode, indexed_mode,
+                    chapters_json, has_transcript, transcript_mode, indexed_mode, visual_coverage,
                     keyframe_count, status,
                     warnings_json, local_source_path, local_source_size,
                     local_source_mtime_ns, pipeline_version
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(video_id) DO UPDATE SET
                     source=excluded.source,
                     source_kind=excluded.source_kind,
@@ -329,6 +357,7 @@ class KeyframeStore:
                     has_transcript=excluded.has_transcript,
                     transcript_mode=excluded.transcript_mode,
                     indexed_mode=excluded.indexed_mode,
+                    visual_coverage=excluded.visual_coverage,
                     keyframe_count=excluded.keyframe_count,
                     status=excluded.status,
                     warnings_json=excluded.warnings_json,
@@ -350,6 +379,7 @@ class KeyframeStore:
                     int(video.has_transcript),
                     video.transcript_mode.value,
                     video.indexed_mode.value,
+                    video.visual_coverage.value,
                     video.keyframe_count,
                     video.status,
                     json.dumps(video.warnings),
@@ -620,6 +650,7 @@ class KeyframeStore:
             has_transcript=bool(row["has_transcript"]),
             transcript_mode=TranscriptMode(row["transcript_mode"]),
             indexed_mode=IngestMode(row["indexed_mode"]),
+            visual_coverage=VisualCoverage(row["visual_coverage"]),
             keyframe_count=row["keyframe_count"],
             status=row["status"],
             warnings=tuple(json.loads(row["warnings_json"])),

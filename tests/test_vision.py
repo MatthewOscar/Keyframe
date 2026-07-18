@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -22,11 +25,15 @@ from video_context_mcp.vision import (
     classify_visual,
     encode_image,
     extract_ocr,
+    extract_visual_moments,
+    extract_visual_probe,
     group_stable_runs,
     guess_language,
     is_dark_screen,
+    plan_visual_probe,
     preprocess_for_ocr,
     sample_frames,
+    sample_frames_at_timestamps,
 )
 
 
@@ -72,6 +79,165 @@ def test_groups_adjacent_hashes_before_filtering_for_stability(tmp_path: Path) -
     assert [run.representative.timestamp_s for run in runs] == [1.0, 3.0]
     assert [run.stable_seconds for run in runs] == [2.0, 2.0]
     assert [run.end_s for run in runs] == [2.0, 4.0]
+
+
+def test_visual_probe_plan_stratifies_and_deduplicates_chapters() -> None:
+    chapters = [(index * 10.0, (index + 1) * 10.0) for index in range(10)]
+    chapters.extend(((30.0, 40.0), (30.02, 39.98)))
+
+    first = plan_visual_probe(
+        100.0,
+        chapters,
+        chapter_candidates=4,
+        uniform_candidates=1,
+    )
+    second = plan_visual_probe(
+        100.0,
+        chapters,
+        chapter_candidates=4,
+        uniform_candidates=1,
+    )
+
+    assert first == second
+    assert first.chapter_timestamps_s == (5.0, 35.0, 65.0, 95.0)
+    assert first.uniform_timestamps_s == (50.0,)
+    assert first.candidate_count == 5
+
+
+def test_visual_probe_plan_clamps_boundaries_for_short_video() -> None:
+    plan = plan_visual_probe(
+        1.0,
+        ((-5.0, -1.0), (0.0, 1.0), (0.0, 1.0), (0.99, 9.0)),
+        chapter_candidates=8,
+        uniform_candidates=16,
+    )
+
+    assert plan.chapter_timestamps_s == (0.0, 0.5, 0.99)
+    assert plan.uniform_timestamps_s == pytest.approx((0.125, 0.375, 0.625, 0.875))
+    assert all(
+        0.0 <= timestamp < 1.0
+        for timestamp in (*plan.chapter_timestamps_s, *plan.uniform_timestamps_s)
+    )
+
+
+def test_visual_probe_retains_at_most_twelve_and_only_ocrs_retained_frames(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"fixture")
+    sampled_timestamps: list[float] = []
+    ocr_paths: list[Path] = []
+
+    def fake_sample(
+        _video_path: Path,
+        work_dir: Path,
+        timestamps_s: tuple[float, ...],
+        **_kwargs: object,
+    ) -> list[SampledFrame]:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        frames: list[SampledFrame] = []
+        for index, timestamp_s in enumerate(timestamps_s):
+            sampled_timestamps.append(timestamp_s)
+            path = work_dir / f"frame-{index:02d}.jpg"
+            Image.new("RGB", (96, 54), (index * 11 % 255, 20, 30)).save(path)
+            frames.append(SampledFrame(timestamp_s, path, f"{index * 17:016x}"))
+        return frames
+
+    def fake_ocr(image: Image.Image | Path, **_kwargs: object) -> OCRResult:
+        assert isinstance(image, Image.Image)
+        ocr_paths.append(Path(f"retained-{len(ocr_paths)}"))
+        return _ocr("Sparse visual evidence")
+
+    monkeypatch.setattr("video_context_mcp.vision.sample_frames_at_timestamps", fake_sample)
+    monkeypatch.setattr("video_context_mcp.vision.extract_ocr", fake_ocr)
+    monkeypatch.setattr(
+        "video_context_mcp.vision.classify_visual",
+        lambda *_args, **_kwargs: ("other", 0.5),
+    )
+    progress: list[float] = []
+
+    moments = extract_visual_probe(
+        video,
+        tmp_path / "work",
+        chapter_timestamps_s=tuple(float(index) for index in range(8)),
+        uniform_timestamps_s=tuple(float(index) for index in range(8, 24)),
+        max_moments=12,
+        ocr_workers=1,
+        progress=lambda _message, fraction: progress.append(fraction),
+    )
+
+    assert len(sampled_timestamps) == 24
+    assert len(moments) == 12
+    assert len(ocr_paths) == len(moments)
+    assert [moment.timestamp_s for moment in moments] == sorted(
+        moment.timestamp_s for moment in moments
+    )
+    assert all(moment.start_s == moment.timestamp_s == moment.end_s for moment in moments)
+    assert all(moment.stable_seconds == 0.0 for moment in moments)
+    assert progress == sorted(progress)
+    assert progress[-1] == 1.0
+
+
+def test_visual_analysis_uses_bounded_workers_and_preserves_timeline_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"fixture")
+    frames: list[SampledFrame] = []
+    runs: list[StableRun] = []
+    for index in range(4):
+        frame_path = tmp_path / f"frame-{index}.jpg"
+        Image.new("RGB", (64, 36), (index * 20, 0, 0)).save(frame_path)
+        frame = SampledFrame(float(index), frame_path, f"{index:016x}")
+        frames.append(frame)
+        runs.append(StableRun(float(index), float(index + 1), 1.0, (frame,), frame))
+
+    monkeypatch.setattr("video_context_mcp.vision.sample_frames", lambda *_a, **_k: frames)
+    monkeypatch.setattr("video_context_mcp.vision.group_stable_runs", lambda *_a, **_k: runs)
+    active = 0
+    maximum_active = 0
+    lock = threading.Lock()
+    first_pair = threading.Barrier(2)
+
+    def fake_analyze(run: StableRun, **_kwargs: object) -> object:
+        nonlocal active, maximum_active
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        if run.start_s < 2:
+            first_pair.wait(timeout=2)
+        time.sleep((4 - run.start_s) * 0.005)
+        with lock:
+            active -= 1
+        return SimpleNamespace(timestamp_s=run.representative.timestamp_s)
+
+    monkeypatch.setattr("video_context_mcp.vision.analyze_stable_run", fake_analyze)
+    progress: list[float] = []
+
+    moments = extract_visual_moments(
+        video,
+        tmp_path / "work",
+        ocr_workers=2,
+        progress=lambda _message, fraction: progress.append(fraction),
+    )
+
+    assert [moment.timestamp_s for moment in moments] == [0.0, 1.0, 2.0, 3.0]
+    assert maximum_active == 2
+    assert progress == sorted(progress)
+    assert progress[-1] == 1.0
+
+
+@pytest.mark.parametrize("workers", [0, -1, True, 1.5])
+def test_visual_analysis_rejects_invalid_worker_counts(
+    tmp_path: Path,
+    workers: object,
+) -> None:
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"fixture")
+    with pytest.raises(ValueError, match="ocr_workers"):
+        extract_visual_moments(video, tmp_path / "work", ocr_workers=workers)  # type: ignore[arg-type]
 
 
 def test_stability_grouping_rejects_out_of_order_frames(tmp_path: Path) -> None:
@@ -137,6 +303,40 @@ def test_sample_frames_captures_ffmpeg_and_hashes_outputs(
     )
     assert "scale=" in filters
     assert filters.endswith(",showinfo")
+
+
+def test_sample_frames_at_timestamps_deduplicates_and_uses_actual_pts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"fixture")
+    requested: list[float] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        requested_t = float(command[command.index("-ss") + 1])
+        requested.append(requested_t)
+        Image.new("RGB", (64, 36), "white").save(Path(command[-1]))
+        stderr = (
+            "[Parsed_showinfo_1] n: 0 pts: 1 "
+            f"pts_time:{requested_t + 0.02:.6f} duration:1 duration_time:0.04"
+        )
+        assert kwargs["stdin"] is subprocess.DEVNULL
+        assert kwargs["timeout"] == 30.0
+        return subprocess.CompletedProcess(command, 0, "", stderr)
+
+    monkeypatch.setattr("video_context_mcp.vision.subprocess.run", fake_run)
+
+    frames = sample_frames_at_timestamps(
+        video,
+        tmp_path / "probe",
+        (2.0, 1.0, 1.01, 2.0),
+        workers=1,
+    )
+
+    assert requested == [1.0, 2.0]
+    assert [frame.timestamp_s for frame in frames] == pytest.approx([1.02, 2.02])
+    assert all(len(frame.phash) == 16 for frame in frames)
 
 
 def test_sample_frames_surfaces_ffmpeg_diagnostic(

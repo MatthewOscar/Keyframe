@@ -12,6 +12,7 @@ import sys
 import tempfile
 import uuid
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -58,6 +59,7 @@ from video_context_mcp.models import (
     TranscriptPage,
     TranscriptSegment,
     VideoRecord,
+    VisualCoverage,
     VisualMoment,
 )
 from video_context_mcp.storage import KeyframeStore
@@ -66,17 +68,23 @@ from video_context_mcp.vision import (
     VisualMoment as ExtractedVisualMoment,
 )
 from video_context_mcp.vision import (
+    VisualProbePlan,
     auto_crop_text_region,
     encode_image,
     extract_visual_moments,
+    extract_visual_probe,
+    plan_visual_probe,
 )
 
 ProgressCallback = Callable[[float, str], None]
 AcquireFunction = Callable[..., AcquiredSource]
 VisionFunction = Callable[..., list[ExtractedVisualMoment]]
+ProbeVisionFunction = Callable[..., list[ExtractedVisualMoment]]
 TranscribeFunction = Callable[..., tuple[AcquiredTranscriptSegment, ...]]
 
 _SAFE_ID_RE = re.compile(r"[^a-zA-Z0-9_-]+")
+_WHISPER_TIMEOUT_MIN_S = 300.0
+_WHISPER_TIMEOUT_MAX_S = 3_600.0
 logger = logging.getLogger(__name__)
 
 
@@ -99,6 +107,7 @@ class KeyframeService:
         store: KeyframeStore | None = None,
         acquire: AcquireFunction = acquire_source,
         extract_visuals: VisionFunction = extract_visual_moments,
+        probe_visuals: ProbeVisionFunction = extract_visual_probe,
         transcribe: TranscribeFunction = transcribe_media,
         has_whisper: Callable[[], bool] = whisper_available,
     ) -> None:
@@ -108,6 +117,7 @@ class KeyframeService:
         self.store.initialize()
         self._acquire = acquire
         self._extract_visuals = extract_visuals
+        self._probe_visuals = probe_visuals
         self._transcribe = transcribe
         self._has_whisper = has_whisper
         self._locks_dir = self.settings.home / "locks"
@@ -256,6 +266,7 @@ class KeyframeService:
                 return self._ingest_result(existing, cache_hit=True)
 
             transcript_source: Sequence[AcquiredTranscriptSegment] = acquired.transcript
+            needs_whisper = False
             if not transcript_source and transcript_mode in {
                 TranscriptMode.AUTO,
                 TranscriptMode.WHISPER,
@@ -274,52 +285,122 @@ class KeyframeService:
                         "Whisper fallback requires local media, but acquisition produced none."
                     )
                 else:
-                    self._notify(progress, 20, "Transcribing speech locally with Whisper")
-                    transcript_source = self._transcribe(
-                        acquired.media_path,
-                        progress=lambda value, message: self._notify(
-                            progress, 20 + value * 0.1, message
-                        ),
-                    )
-                    if transcript_source and not extra_warnings:
-                        extra_warnings.append("Used local Whisper speech transcription.")
-
-            segments = self._segments(video_id, transcript_source)
-            prior = self.store.get_video(video_id)
-            prior_moments = self.store.moments_for_video(video_id) if prior is not None else []
+                    needs_whisper = True
 
             published_run: Path | None = None
-            if mode is IngestMode.FULL:
-                if acquired.media_path is None:
-                    raise ExtractionError(
-                        "Full ingestion requires a local media file; retry the acquisition."
-                    )
-                self._notify(progress, 30, "Extracting stable visual moments")
-                try:
-                    moments, published_run = self._extract_and_publish(
-                        video_id,
-                        acquired.media_path,
-                        progress=progress,
-                    )
-                except OSError as exc:
-                    raise ExtractionError(
-                        "Could not stage visual artifacts. Check free disk space and permissions "
-                        f"under KEYFRAME_HOME ({self.settings.home}), then retry."
-                    ) from exc
-                indexed_mode = IngestMode.FULL
-                if not moments:
-                    extra_warnings.append(
-                        "No stable visual moments met the retention threshold; transcript search "
-                        "remains available."
-                    )
-            elif prior is not None and prior.indexed_mode is IngestMode.FULL:
-                moments = prior_moments
-                indexed_mode = IngestMode.FULL
-            else:
-                moments = []
-                indexed_mode = IngestMode.FAST
-
+            visuals_rebuilt = False
             try:
+                stored_prior = self.store.get_video(video_id)
+                prior_moments = (
+                    self.store.moments_for_video(video_id) if stored_prior is not None else []
+                )
+                reusable_prior = (
+                    stored_prior
+                    if stored_prior is not None
+                    and stored_prior.pipeline_version == PIPELINE_VERSION
+                    and stored_prior.source_fingerprint == fingerprint
+                    else None
+                )
+                whisper_timeout_s = _whisper_timeout(acquired.metadata.duration_s)
+                probe_plan: VisualProbePlan | None = None
+                if mode is IngestMode.FULL:
+                    visual_coverage = VisualCoverage.FULL
+                    indexed_mode = IngestMode.FULL
+                    visual_message = "Extracting stable visual moments"
+                    visuals_rebuilt = True
+                elif (
+                    reusable_prior is not None
+                    and reusable_prior.visual_coverage is VisualCoverage.FULL
+                    and (not refresh or acquired.metadata.kind is SourceKind.LOCAL)
+                ):
+                    moments = prior_moments
+                    visual_coverage = VisualCoverage.FULL
+                    indexed_mode = IngestMode.FULL
+                    visual_message = ""
+                else:
+                    probe_plan = plan_visual_probe(
+                        acquired.metadata.duration_s,
+                        tuple((chapter.start_s, chapter.end_s) for chapter in acquired.chapters),
+                    )
+                    visual_coverage = VisualCoverage.PROBE
+                    indexed_mode = IngestMode.FAST
+                    visual_message = "Extracting sparse visual probe"
+                    visuals_rebuilt = True
+
+                if visuals_rebuilt:
+                    visual_media_path = acquired.media_path
+                    if visual_media_path is None:
+                        raise ExtractionError(
+                            "Visual ingestion requires a local media file; retry the acquisition."
+                        )
+
+                    def extract_selected_visuals() -> tuple[list[VisualMoment], Path | None]:
+                        try:
+                            return self._extract_and_publish(
+                                video_id,
+                                visual_media_path,
+                                coverage=visual_coverage,
+                                probe_plan=probe_plan,
+                                progress=progress,
+                            )
+                        except OSError as exc:
+                            raise ExtractionError(
+                                "Could not stage visual artifacts. Check free disk space and "
+                                f"permissions under KEYFRAME_HOME ({self.settings.home}), then "
+                                "retry."
+                            ) from exc
+
+                    if needs_whisper:
+                        self._notify(progress, 20, "Transcribing speech locally with Whisper")
+                        with ThreadPoolExecutor(
+                            max_workers=1,
+                            thread_name_prefix="keyframe-whisper",
+                        ) as executor:
+                            transcript_future = executor.submit(
+                                self._transcribe,
+                                visual_media_path,
+                                timeout_s=whisper_timeout_s,
+                            )
+                            self._notify(progress, 30, visual_message)
+                            moments, published_run = extract_selected_visuals()
+                            transcript_source = transcript_future.result()
+                        self._notify(progress, 88, "Local Whisper transcription complete")
+                    else:
+                        self._notify(progress, 30, visual_message)
+                        moments, published_run = extract_selected_visuals()
+                    if not moments and visual_coverage is VisualCoverage.FULL:
+                        extra_warnings.append(
+                            "No stable visual moments met the retention threshold; transcript "
+                            "search remains available."
+                        )
+                    elif not moments:
+                        extra_warnings.append(
+                            "The sparse visual probe completed without retaining a frame; "
+                            "re-ingest with mode='full' before making visual claims."
+                        )
+                else:
+                    if needs_whisper:
+                        if acquired.media_path is None:
+                            raise ExtractionError(
+                                "Whisper fallback requires local media, but acquisition produced "
+                                "none."
+                            )
+                        self._notify(progress, 20, "Transcribing speech locally with Whisper")
+                        transcript_source = self._transcribe(
+                            acquired.media_path,
+                            progress=lambda value, message: self._notify(
+                                progress, 20 + value * 0.1, message
+                            ),
+                            timeout_s=whisper_timeout_s,
+                        )
+
+                if (
+                    needs_whisper
+                    and transcript_source
+                    and not any("used local Whisper" in warning for warning in extra_warnings)
+                ):
+                    extra_warnings.append("Used local Whisper speech transcription.")
+                segments = self._segments(video_id, transcript_source)
                 self._assert_local_source_unchanged(acquired)
                 if acquired.owns_media:
                     acquired.cleanup()
@@ -339,6 +420,7 @@ class KeyframeService:
                     has_transcript=bool(segments),
                     transcript_mode=transcript_mode,
                     indexed_mode=indexed_mode,
+                    visual_coverage=visual_coverage,
                     keyframe_count=len(moments),
                     status="ready",
                     warnings=warnings,
@@ -362,10 +444,12 @@ class KeyframeService:
                 self._notify(progress, 92, "Committing the local index")
                 self.store.save_video(video, segments, moments)
             except BaseException:
-                if published_run is not None:
+                if published_run is not None and not self._artifact_run_is_referenced(
+                    published_run
+                ):
                     shutil.rmtree(published_run, ignore_errors=True)
                 raise
-            if mode is IngestMode.FULL:
+            if visuals_rebuilt:
                 self._remove_superseded_runs(prior_moments, keep=published_run)
             self._notify(progress, 100, "Video index ready")
             return self._ingest_result(video, cache_hit=False)
@@ -435,8 +519,7 @@ class KeyframeService:
         cursor: str | None = None,
         limit: int = 10,
     ) -> SearchPage:
-        if video_id is not None:
-            self._require_video(video_id)
+        video = self._require_video(video_id) if video_id is not None else None
         try:
             selected_channel = SearchChannel(channel)
         except ValueError as exc:
@@ -451,6 +534,7 @@ class KeyframeService:
                 "query": normalized_query,
                 "video_id": video_id,
                 "channel": selected_channel.value,
+                "visual_coverage": video.visual_coverage.value if video is not None else None,
             },
         )
         offset = decode_cursor(cursor, kind="search", scope=scope)
@@ -469,6 +553,7 @@ class KeyframeService:
         return SearchPage(
             query=normalized_query,
             hits=tuple(hits),
+            visual_coverage=video.visual_coverage if video is not None else None,
             next_cursor=next_cursor,
             has_more=has_more,
         )
@@ -481,13 +566,20 @@ class KeyframeService:
         cursor: str | None = None,
         limit: int = 20,
     ) -> MomentPage:
-        self._require_video(video_id)
+        video = self._require_video(video_id)
         try:
             selected_kind = MomentKind(kind)
         except ValueError as exc:
             raise SourceError(f"Unsupported moment kind: {kind!r}.") from exc
         _validate_limit(limit, MAX_MOMENT_LIMIT, "moment")
-        scope = cursor_scope("moments", {"video_id": video_id, "kind": selected_kind.value})
+        scope = cursor_scope(
+            "moments",
+            {
+                "video_id": video_id,
+                "kind": selected_kind.value,
+                "visual_coverage": video.visual_coverage.value,
+            },
+        )
         offset = decode_cursor(cursor, kind="moments", scope=scope)
         moments, has_more = self.store.moment_page(
             video_id,
@@ -522,6 +614,7 @@ class KeyframeService:
         return MomentPage(
             video_id=video_id,
             moments=summaries,
+            visual_coverage=video.visual_coverage,
             next_cursor=next_cursor,
             has_more=has_more,
         )
@@ -533,7 +626,7 @@ class KeyframeService:
         moment_id: str | None = None,
         t: float | None = None,
     ) -> VisualPayload[CodeResult]:
-        self._require_video(video_id)
+        video = self._require_video(video_id)
         if (moment_id is None) == (t is None):
             raise SourceError("Provide exactly one of moment_id or t.")
         if t is not None:
@@ -553,9 +646,15 @@ class KeyframeService:
                 tolerance_s=5.0,
             )
             if moment is None:
+                if video.visual_coverage is VisualCoverage.FULL:
+                    raise CacheError(
+                        "No code or terminal moment was retained within 5 seconds in the full "
+                        "visual index. Use video_list_moments and video_get_frame to check for "
+                        "heuristic misclassification."
+                    )
                 raise CacheError(
-                    "No code or terminal moment was retained within 5 seconds. "
-                    "Use video_list_moments or verify that the video was ingested in full mode."
+                    "No code or terminal moment was retained within 5 seconds in the sparse "
+                    "probe. Use video_list_moments or re-ingest with mode='full'."
                 )
         if moment.kind not in {MomentKind.CODE, MomentKind.TERMINAL}:
             raise CacheError(
@@ -575,6 +674,7 @@ class KeyframeService:
                 confidence=moment.ocr_confidence,
                 classification_confidence=moment.classification_confidence,
                 kind=moment.kind,
+                visual_coverage=video.visual_coverage,
                 notes=moment.notes,
             ),
             image_data=image_data,
@@ -588,7 +688,7 @@ class KeyframeService:
         t: float,
         region: FrameRegion = FrameRegion.FULL,
     ) -> VisualPayload[FrameResult]:
-        self._require_video(video_id)
+        video = self._require_video(video_id)
         _validate_timestamp(t, "Frame timestamp")
         try:
             selected_region = FrameRegion(region)
@@ -601,8 +701,14 @@ class KeyframeService:
             tolerance_s=None,
         )
         if moment is None:
+            if video.visual_coverage is VisualCoverage.FULL:
+                raise CacheError(
+                    "Full visual indexing completed but retained no frames. Check the ingest "
+                    "warnings and source video; repeating full mode without a source or tool "
+                    "change is unlikely to help."
+                )
             raise CacheError(
-                "No retained frames are available. Re-ingest this video with mode='full'."
+                "No retained probe frames are available. Re-ingest this video with mode='full'."
             )
         image_path = (
             moment.crop_path
@@ -618,6 +724,7 @@ class KeyframeService:
                 actual_t=moment.actual_t,
                 kind=moment.kind,
                 region=selected_region,
+                visual_coverage=video.visual_coverage,
             ),
             image_data=image_data,
             mime_type=mime_type,
@@ -628,6 +735,8 @@ class KeyframeService:
         video_id: str,
         media_path: Path,
         *,
+        coverage: VisualCoverage,
+        probe_plan: VisualProbePlan | None,
         progress: ProgressCallback | None,
     ) -> tuple[list[VisualMoment], Path | None]:
         with tempfile.TemporaryDirectory(prefix="ingest-", dir=self.settings.tmp_dir) as raw_temp:
@@ -636,19 +745,37 @@ class KeyframeService:
             def visual_progress(message: str, fraction: float) -> None:
                 self._notify(progress, 30 + max(0.0, min(1.0, fraction)) * 55, message)
 
-            extracted = self._extract_visuals(
-                media_path,
-                work_dir / "analysis",
-                ffmpeg_binary=self.settings.ffmpeg_executable,
-                ffprobe_binary=self.settings.ffprobe_executable,
-                node_binary=self.settings.node_executable,
-                tesseract_binary=self.settings.tesseract_executable,
-                progress=visual_progress,
-            )
+            extractor_kwargs = {
+                "ffmpeg_binary": self.settings.ffmpeg_executable,
+                "ffprobe_binary": self.settings.ffprobe_executable,
+                "node_binary": self.settings.node_executable,
+                "tesseract_binary": self.settings.tesseract_executable,
+                "progress": visual_progress,
+            }
+            if coverage is VisualCoverage.PROBE:
+                if probe_plan is None:
+                    raise ExtractionError("Sparse visual ingestion did not receive a probe plan.")
+                extracted = self._probe_visuals(
+                    media_path,
+                    work_dir / "analysis",
+                    chapter_timestamps_s=probe_plan.chapter_timestamps_s,
+                    uniform_timestamps_s=probe_plan.uniform_timestamps_s,
+                    **extractor_kwargs,
+                )
+            elif coverage is VisualCoverage.FULL:
+                extracted = self._extract_visuals(
+                    media_path,
+                    work_dir / "analysis",
+                    **extractor_kwargs,
+                )
+            else:
+                raise ExtractionError(
+                    "Visual artifact publication requires probe or full coverage."
+                )
             if not extracted:
                 return [], None
 
-            run_name = f"p{PIPELINE_VERSION}-{uuid.uuid4().hex[:12]}"
+            run_name = f"p{PIPELINE_VERSION}-{coverage.value}-{uuid.uuid4().hex[:12]}"
             staged_run = work_dir / "publish"
             staged_run.mkdir(parents=True)
             final_run = self.settings.artifacts_dir / video_id / run_name
@@ -663,6 +790,11 @@ class KeyframeService:
                 encoded_crop = encode_image(cropped)
                 (staged_run / crop_name).write_bytes(encoded_crop.data)
                 notes = [f"Visual classification confidence: {item.kind_confidence:.2f}."]
+                if coverage is VisualCoverage.PROBE:
+                    notes.append(
+                        "Sparse probe evidence is partial; verify exact claims against the source "
+                        "image and use mode='full' for gaps, sequences, or negative visual claims."
+                    )
                 if item.ocr.confidence < 0.70:
                     notes.append(
                         "OCR confidence is below 0.70; treat the source frame as authoritative."
@@ -671,7 +803,7 @@ class KeyframeService:
                     notes.append(
                         "Reconstructed code did not parse; verify it against the source frame."
                     )
-                moment_id = f"{video_id}:m:{index}"
+                moment_id = f"{video_id}:m:{run_name}:{index}"
                 moments.append(
                     VisualMoment(
                         moment_id=moment_id,
@@ -830,7 +962,11 @@ class KeyframeService:
         requested_mode: IngestMode,
         requested_transcript: TranscriptMode,
     ) -> bool:
-        mode_ready = requested_mode is IngestMode.FAST or video.indexed_mode is IngestMode.FULL
+        mode_ready = (
+            video.visual_coverage in {VisualCoverage.PROBE, VisualCoverage.FULL}
+            if requested_mode is IngestMode.FAST
+            else video.visual_coverage is VisualCoverage.FULL
+        )
         if not mode_ready:
             return False
         if requested_transcript is TranscriptMode.NONE:
@@ -881,6 +1017,7 @@ class KeyframeService:
             transcript_mode=video.transcript_mode,
             keyframe_count=video.keyframe_count,
             indexed_mode=video.indexed_mode,
+            visual_coverage=video.visual_coverage,
             status=video.status,
             warnings=video.warnings,
             cache_hit=cache_hit,
@@ -938,6 +1075,23 @@ class KeyframeService:
             if keep is None or run != keep:
                 shutil.rmtree(run, ignore_errors=True)
 
+    def _artifact_run_is_referenced(self, run: Path) -> bool:
+        """Fail safe when a database error may have happened after commit."""
+
+        expected = run.resolve(strict=False)
+        try:
+            return any(
+                artifact_run == expected
+                for value in self.store.artifact_paths()
+                if (artifact_run := self._artifact_run(self.settings.home / value)) is not None
+            )
+        except BaseException:
+            logger.exception(
+                "Could not verify whether published visual run %s was committed; retaining it",
+                run,
+            )
+            return True
+
     def _artifact_run(self, path: Path) -> Path | None:
         resolved = path.resolve(strict=False)
         root = self.settings.artifacts_dir.resolve(strict=False)
@@ -952,6 +1106,17 @@ class KeyframeService:
     def _notify(progress: ProgressCallback | None, value: float, message: str) -> None:
         if progress is not None:
             progress(max(0.0, min(100.0, value)), message)
+
+
+def _whisper_timeout(duration_s: float) -> float:
+    """Bound a worker while allowing slower CPU-only transcription and model setup."""
+
+    if not math.isfinite(duration_s) or duration_s <= 0:
+        return _WHISPER_TIMEOUT_MIN_S
+    return min(
+        _WHISPER_TIMEOUT_MAX_S,
+        max(_WHISPER_TIMEOUT_MIN_S, duration_s * 2.0 + 120.0),
+    )
 
 
 def _validate_limit(value: int, maximum: int, label: str) -> None:

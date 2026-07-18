@@ -54,7 +54,7 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
         progress.append((value, total, message))
 
     with (tmp_path / "server.stderr").open("w+", encoding="utf-8") as stderr:
-        with anyio.fail_after(20):
+        with anyio.fail_after(30):
             async with stdio_client(parameters, errlog=stderr) as (read_stream, write_stream):
                 async with ClientSession(
                     read_stream,
@@ -78,7 +78,7 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                         "video_ingest",
                         {
                             "source": str(VIDEO_PATH),
-                            "mode": "full",
+                            "mode": "fast",
                             "transcript_mode": "captions",
                             "max_duration_s": 30,
                         },
@@ -87,7 +87,8 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                     assert ingest.isError is False
                     assert ingest.structuredContent is not None
                     assert ingest.structuredContent["has_transcript"] is True
-                    assert ingest.structuredContent["keyframe_count"] >= 3
+                    assert ingest.structuredContent["visual_coverage"] == "probe"
+                    assert 1 <= ingest.structuredContent["keyframe_count"] <= 12
                     video_id = str(ingest.structuredContent["video_id"])
 
                     transcript = await session.call_tool(
@@ -124,6 +125,36 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                     assert shown.structuredContent is not None
                     assert shown.structuredContent["hits"][0]["channel"] == "shown"
                     assert shown.structuredContent["hits"][0]["moment_id"] is not None
+                    assert shown.structuredContent["visual_coverage"] == "probe"
+
+                    probe_moments = await session.call_tool(
+                        "video_list_moments",
+                        {"video_id": video_id, "kind": "any", "limit": 12},
+                    )
+                    assert probe_moments.isError is False
+                    assert probe_moments.structuredContent is not None
+                    assert probe_moments.structuredContent["visual_coverage"] == "probe"
+                    assert probe_moments.structuredContent["moments"]
+                    assert all(
+                        moment["stable_seconds"] == 0
+                        for moment in probe_moments.structuredContent["moments"]
+                    )
+
+                    full = await session.call_tool(
+                        "video_ingest",
+                        {
+                            "source": str(VIDEO_PATH),
+                            "mode": "full",
+                            "transcript_mode": "captions",
+                            "max_duration_s": 30,
+                        },
+                        progress_callback=capture_progress,
+                    )
+                    assert full.isError is False
+                    assert full.structuredContent is not None
+                    assert full.structuredContent["video_id"] == video_id
+                    assert full.structuredContent["visual_coverage"] == "full"
+                    assert full.structuredContent["keyframe_count"] >= 3
 
                     moments = await session.call_tool(
                         "video_list_moments",
@@ -141,6 +172,7 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                     assert code.isError is False
                     assert code.structuredContent is not None
                     assert code.structuredContent["moment_id"] == code_moment_id
+                    assert code.structuredContent["visual_coverage"] == "full"
                     assert "slugify" in str(code.structuredContent["code"]).lower()
                     assert [block.type for block in code.content] == ["text", "image"]
 
@@ -165,7 +197,7 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
     assert progress
     assert progress[0][0] == 0
     assert progress[-1][0] == 100
-    assert roots_requests == 1
+    assert roots_requests == 2
     assert stderr_output == ""
 
 

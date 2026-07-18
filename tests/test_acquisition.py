@@ -396,7 +396,7 @@ def _install_fake_ydl(
     return calls
 
 
-def test_remote_fast_mode_uses_metadata_and_manual_captions_without_media(
+def test_remote_fast_mode_downloads_low_resolution_video_probe_with_captions(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -423,8 +423,9 @@ def test_remote_fast_mode_uses_metadata_and_manual_captions_without_media(
     assert acquired.transcript[0].text == "Manual caption"
     assert acquired.transcript[0].origin == "captions"
     assert acquired.chapters[0].title == "Intro"
-    assert acquired.media_path is None
-    assert [download for _, download in calls] == [False]
+    assert acquired.media_path is not None
+    temp_dir = acquired.media_path.parent
+    assert [download for _, download in calls] == [False, True]
     options = calls[0][0]
     assert options["noplaylist"] is True
     assert options["cookiefile"] is None
@@ -433,6 +434,12 @@ def test_remote_fast_mode_uses_metadata_and_manual_captions_without_media(
     assert options["external_downloader"] == "native"
     assert options["hls_prefer_native"] is True
     assert options["js_runtimes"] == {"node": {"path": settings.node_executable}}
+    assert calls[1][0]["format"] == ("bestvideo[height<=360]/best[height<=360]/worstvideo/worst")
+
+    acquired.cleanup()
+
+    assert not temp_dir.exists()
+    assert acquired.media_path is None
 
 
 def test_remote_unlisted_availability_is_preserved(
@@ -448,6 +455,7 @@ def test_remote_unlisted_availability_is_preserved(
     )
 
     assert acquired.metadata.availability == "unlisted"
+    acquired.cleanup()
 
 
 def test_auto_transcript_falls_back_when_manual_caption_download_fails(
@@ -456,7 +464,7 @@ def test_auto_transcript_falls_back_when_manual_caption_download_fails(
 ) -> None:
     manual_url = f"https://{PUBLIC_IP}/manual.vtt"
     automatic_url = f"https://{PUBLIC_IP}/automatic.vtt"
-    _install_fake_ydl(
+    calls = _install_fake_ydl(
         monkeypatch,
         _remote_info(
             subtitles={"en": [{"ext": "vtt", "url": manual_url}]},
@@ -479,6 +487,29 @@ def test_auto_transcript_falls_back_when_manual_caption_download_fails(
     assert acquired.transcript[0].text == "Automatic caption"
     assert acquired.transcript[0].origin == "automatic_captions"
     assert any("Manual captions could not be read" in warning for warning in acquired.warnings)
+    assert calls[1][0]["format"] == ("bestvideo[height<=360]/best[height<=360]/worstvideo/worst")
+    acquired.cleanup()
+
+
+def test_remote_fast_captionless_auto_downloads_low_resolution_av_probe(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_fake_ydl(monkeypatch, _remote_info())
+
+    acquired = acquire_remote(
+        f"https://{PUBLIC_IP}/video",
+        settings,
+        mode="fast",
+        transcript_mode="auto",
+    )
+
+    assert acquired.media_path is not None
+    assert acquired.transcript == ()
+    assert any("No readable captions" in warning for warning in acquired.warnings)
+    assert [download for _, download in calls] == [False, True]
+    assert calls[1][0]["format"] == "best[height<=360]/worst"
+    acquired.cleanup()
 
 
 def test_remote_full_mode_downloads_then_cleanup_is_idempotent(
@@ -498,6 +529,7 @@ def test_remote_full_mode_downloads_then_cleanup_is_idempotent(
     temp_dir = media_path.parent
     assert media_path.read_bytes() == b"downloaded video"
     assert [download for _, download in calls] == [False, True]
+    assert calls[1][0]["format"] == "bv*+ba/b"
 
     acquired.cleanup()
     acquired.cleanup()
@@ -594,6 +626,7 @@ def test_remote_whisper_mode_downloads_even_when_fast(
 
     assert [download for _, download in calls] == [False, True]
     assert "Whisper" in acquired.warnings[0]
+    assert calls[1][0]["format"] == "best[height<=360]/worst"
     acquired.cleanup()
 
 
@@ -603,7 +636,7 @@ def test_refresh_disables_yt_dlp_cache(
 ) -> None:
     calls = _install_fake_ydl(monkeypatch, _remote_info())
 
-    acquire_remote(
+    acquired = acquire_remote(
         f"https://{PUBLIC_IP}/video",
         settings,
         transcript_mode="none",
@@ -611,6 +644,8 @@ def test_refresh_disables_yt_dlp_cache(
     )
 
     assert calls[0][0]["cachedir"] is False
+    assert calls[1][0]["cachedir"] is False
+    acquired.cleanup()
 
 
 def test_remote_download_revalidates_identity_and_cleans_up(

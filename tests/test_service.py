@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -19,12 +21,14 @@ from video_context_mcp.acquisition import (
 from video_context_mcp.config import Settings
 from video_context_mcp.constants import MAX_IMAGE_BYTES, MAX_IMAGE_EDGE, PIPELINE_VERSION
 from video_context_mcp.cursors import CursorError
-from video_context_mcp.errors import CacheError, SourceError
+from video_context_mcp.errors import CacheError, ExtractionError, SourceError
 from video_context_mcp.models import (
     IngestMode,
     MomentKind,
+    SearchChannel,
     TranscriptMode,
     VideoRecord,
+    VisualCoverage,
     VisualMoment,
 )
 from video_context_mcp.service import KeyframeService
@@ -134,6 +138,30 @@ def _fake_visual_extractor(
     return extract
 
 
+def _fake_probe_extractor(
+    *, kinds: tuple[str, ...] = ("code", "slide")
+) -> Callable[..., list[ExtractedVisualMoment]]:
+    full_extractor = _fake_visual_extractor(kinds=kinds[:1])
+
+    def extract(
+        media_path: Path,
+        work_dir: Path,
+        **kwargs: object,
+    ) -> list[ExtractedVisualMoment]:
+        moments = full_extractor(media_path, work_dir, **kwargs)
+        return [
+            replace(
+                moment,
+                start_s=moment.timestamp_s,
+                end_s=moment.timestamp_s,
+                stable_seconds=0.0,
+            )
+            for moment in moments
+        ]
+
+    return extract
+
+
 def _service(
     settings: Settings,
     acquire: Callable[..., AcquiredSource],
@@ -146,6 +174,7 @@ def _service(
         store=store,
         acquire=acquire,
         extract_visuals=_fake_visual_extractor(kinds=kinds),
+        probe_visuals=_fake_probe_extractor(kinds=kinds),
         has_whisper=lambda: False,
     )
 
@@ -248,11 +277,175 @@ def test_fast_refresh_preserves_a_previously_published_full_visual_index(tmp_pat
 
     assert refreshed.cache_hit is False
     assert refreshed.indexed_mode is IngestMode.FULL
+    assert refreshed.visual_coverage is VisualCoverage.FULL
     assert refreshed.keyframe_count == len(prior)
     assert {
         moment.frame_path for moment in service.store.moments_for_video(full.video_id)
     } == prior_paths
     assert all((settings.home / path).is_file() for path in prior_paths)
+
+
+def test_remote_fast_refresh_rebuilds_probe_instead_of_reusing_stale_full_visuals(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    media = _source_file(source_root)
+    calls = 0
+
+    def acquire(_source: str, _settings: Settings, **_kwargs: object) -> AcquiredSource:
+        nonlocal calls
+        calls += 1
+        return AcquiredSource(
+            metadata=SourceMetadata(
+                source="https://www.youtube.com/watch?v=stable-id",
+                kind=SourceKind.YOUTUBE,
+                video_id="stable-id",
+                title=f"Remote revision {calls}",
+                duration_s=10,
+                provider="youtube",
+            ),
+            transcript=(AcquiredTranscriptSegment(0, 1, f"remote transcript revision {calls}"),),
+            media_path=media,
+        )
+
+    service = _service(settings, acquire)
+    full = service.ingest(
+        "https://www.youtube.com/watch?v=stable-id",
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+    full_paths = {moment.frame_path for moment in service.store.moments_for_video(full.video_id)}
+
+    refreshed = service.ingest(
+        "https://www.youtube.com/watch?v=stable-id",
+        mode=IngestMode.FAST,
+        transcript_mode=TranscriptMode.CAPTIONS,
+        refresh=True,
+    )
+
+    assert calls == 2
+    assert refreshed.cache_hit is False
+    assert refreshed.title == "Remote revision 2"
+    assert refreshed.visual_coverage is VisualCoverage.PROBE
+    assert refreshed.indexed_mode is IngestMode.FAST
+    assert refreshed.keyframe_count == 1
+    assert not any((settings.home / path).exists() for path in full_paths)
+
+
+def test_fast_probe_is_queryable_and_full_upgrade_replaces_it_atomically(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, calls = _fake_acquirer()
+    service = _service(settings, acquire)
+
+    fast = service.ingest(
+        str(source), mode=IngestMode.FAST, transcript_mode=TranscriptMode.CAPTIONS
+    )
+    probe_moments = service.store.moments_for_video(fast.video_id)
+    probe_paths = {moment.frame_path for moment in probe_moments}
+
+    assert fast.visual_coverage is VisualCoverage.PROBE
+    assert fast.indexed_mode is IngestMode.FAST
+    assert fast.keyframe_count == 1
+    assert service.list_moments(fast.video_id).visual_coverage is VisualCoverage.PROBE
+    assert (
+        service.search(
+            "example_0", video_id=fast.video_id, channel=SearchChannel.SHOWN
+        ).visual_coverage
+        is VisualCoverage.PROBE
+    )
+    assert not service.search("example_1", video_id=fast.video_id, channel=SearchChannel.SHOWN).hits
+    assert service.get_frame(fast.video_id, t=2).result.visual_coverage is VisualCoverage.PROBE
+    old_probe_id = probe_moments[0].moment_id
+
+    full = service.ingest(
+        str(source), mode=IngestMode.FULL, transcript_mode=TranscriptMode.CAPTIONS
+    )
+    full_moments = service.store.moments_for_video(full.video_id)
+
+    assert full.cache_hit is False
+    assert full.visual_coverage is VisualCoverage.FULL
+    assert full.indexed_mode is IngestMode.FULL
+    assert full.keyframe_count == 2
+    assert len(calls) == 2
+    assert {moment.moment_id for moment in full_moments}.isdisjoint({old_probe_id})
+    assert service.search("example_1", video_id=full.video_id, channel=SearchChannel.SHOWN).hits
+    assert not any((settings.home / path).exists() for path in probe_paths)
+    with pytest.raises(CacheError, match="was not found"):
+        service.get_code(full.video_id, moment_id=old_probe_id)
+
+    cached_fast = service.ingest(
+        str(source), mode=IngestMode.FAST, transcript_mode=TranscriptMode.CAPTIONS
+    )
+    assert cached_fast.cache_hit is True
+    assert cached_fast.visual_coverage is VisualCoverage.FULL
+    assert cached_fast.indexed_mode is IngestMode.FULL
+
+
+def test_visual_cursor_is_rejected_after_probe_upgrades_to_full(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer()
+    service = KeyframeService(
+        settings=settings,
+        acquire=acquire,
+        probe_visuals=_fake_visual_extractor(),
+        extract_visuals=_fake_visual_extractor(),
+        has_whisper=lambda: False,
+    )
+    fast = service.ingest(
+        str(source), mode=IngestMode.FAST, transcript_mode=TranscriptMode.CAPTIONS
+    )
+    probe_page = service.list_moments(fast.video_id, limit=1)
+    assert probe_page.next_cursor is not None
+
+    full = service.ingest(
+        str(source), mode=IngestMode.FULL, transcript_mode=TranscriptMode.CAPTIONS
+    )
+    assert full.visual_coverage is VisualCoverage.FULL
+    with pytest.raises(CursorError, match="does not belong"):
+        service.list_moments(full.video_id, cursor=probe_page.next_cursor, limit=1)
+
+
+def test_legacy_none_coverage_never_satisfies_fast_ingest(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    contents = source.read_bytes()
+    stat = source.stat()
+    digest = hashlib.sha256(contents).hexdigest()
+    acquire, calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    service.store.save_video(
+        VideoRecord(
+            video_id=f"local-{digest[:16]}",
+            source=str(source),
+            source_kind="local",
+            availability="local",
+            source_fingerprint=f"sha256:{digest}:pipeline:{PIPELINE_VERSION}",
+            title="Legacy transcript-only index",
+            duration_s=10,
+            has_transcript=False,
+            transcript_mode=TranscriptMode.CAPTIONS,
+            indexed_mode=IngestMode.FAST,
+            visual_coverage=VisualCoverage.NONE,
+            keyframe_count=0,
+            local_source_path=str(source),
+            local_source_size=len(contents),
+            local_source_mtime_ns=stat.st_mtime_ns,
+            pipeline_version=PIPELINE_VERSION,
+        ),
+        (),
+        (),
+    )
+
+    result = service.ingest(
+        str(source), mode=IngestMode.FAST, transcript_mode=TranscriptMode.CAPTIONS
+    )
+
+    assert result.cache_hit is False
+    assert result.visual_coverage is VisualCoverage.PROBE
+    assert result.keyframe_count == 1
+    assert len(calls) == 1
 
 
 def test_cache_identity_includes_requested_transcript_mode(tmp_path: Path) -> None:
@@ -389,6 +582,7 @@ def _seed_artifact_moment(
         duration_s=end_s,
         has_transcript=False,
         indexed_mode=IngestMode.FULL,
+        visual_coverage=VisualCoverage.FULL,
         keyframe_count=1,
         pipeline_version=PIPELINE_VERSION,
     )
@@ -454,6 +648,20 @@ class _FailingStore(KeyframeStore):
         super().save_video(video, segments, moments)  # type: ignore[arg-type]
 
 
+class _PostCommitFailingStore(KeyframeStore):
+    fail_after_commit = False
+
+    def save_video(
+        self,
+        video: VideoRecord,
+        segments: tuple[object, ...] | list[object],
+        moments: tuple[object, ...] | list[object],
+    ) -> None:
+        super().save_video(video, segments, moments)  # type: ignore[arg-type]
+        if self.fail_after_commit:
+            raise RuntimeError("simulated post-commit failure")
+
+
 def test_failed_refresh_removes_new_run_but_preserves_committed_artifacts(tmp_path: Path) -> None:
     settings, source_root = _settings(tmp_path)
     source = _source_file(source_root)
@@ -482,6 +690,32 @@ def test_failed_refresh_removes_new_run_but_preserves_committed_artifacts(tmp_pa
     assert all((settings.home / path).is_file() for path in committed_paths)
     published_runs = {path.name for path in (settings.artifacts_dir / first.video_id).iterdir()}
     assert published_runs == committed_runs
+    assert not any(settings.tmp_dir.iterdir())
+
+
+def test_post_commit_failure_never_deletes_artifacts_referenced_by_database(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer()
+    store = _PostCommitFailingStore(settings.cache_dir / "keyframe.sqlite3")
+    service = _service(settings, acquire, store=store)
+    store.fail_after_commit = True
+
+    with pytest.raises(RuntimeError, match="simulated post-commit failure"):
+        service.ingest(
+            str(source),
+            mode=IngestMode.FAST,
+            transcript_mode=TranscriptMode.CAPTIONS,
+        )
+
+    committed = store.find_by_source(str(source), pipeline_version=PIPELINE_VERSION)
+    assert committed is not None
+    assert committed.visual_coverage is VisualCoverage.PROBE
+    referenced = store.moments_for_video(committed.video_id)
+    assert referenced
+    assert all((settings.home / moment.frame_path).is_file() for moment in referenced)
     assert not any(settings.tmp_dir.iterdir())
 
 
@@ -514,6 +748,144 @@ def test_source_change_during_extraction_publishes_neither_index_nor_artifacts(
             str(source),
             mode=IngestMode.FULL,
             transcript_mode=TranscriptMode.CAPTIONS,
+        )
+
+    assert service.store.find_by_source(str(source), pipeline_version=PIPELINE_VERSION) is None
+    assert not any(path.is_file() for path in settings.artifacts_dir.rglob("*"))
+    assert not any(settings.tmp_dir.iterdir())
+
+
+def test_full_whisper_ingest_overlaps_transcription_and_visual_extraction(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer(transcript_texts=())
+    whisper_started = threading.Event()
+    visuals_started = threading.Event()
+    base_extractor = _fake_visual_extractor()
+
+    def transcribe(
+        _media_path: Path,
+        **_kwargs: object,
+    ) -> tuple[AcquiredTranscriptSegment, ...]:
+        assert _kwargs["timeout_s"] == 300.0
+        whisper_started.set()
+        assert visuals_started.wait(timeout=2), "visual extraction did not overlap Whisper"
+        return (AcquiredTranscriptSegment(0, 1, "parallel speech", origin="whisper"),)
+
+    def extract(
+        media_path: Path,
+        work_dir: Path,
+        **kwargs: object,
+    ) -> list[ExtractedVisualMoment]:
+        visuals_started.set()
+        assert whisper_started.wait(timeout=2), "Whisper did not start before visual extraction"
+        return base_extractor(media_path, work_dir, **kwargs)
+
+    service = KeyframeService(
+        settings=settings,
+        acquire=acquire,
+        extract_visuals=extract,
+        transcribe=transcribe,
+        has_whisper=lambda: True,
+    )
+    progress: list[tuple[float, str]] = []
+
+    result = service.ingest(
+        str(source),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.WHISPER,
+        progress=lambda value, message: progress.append((value, message)),
+    )
+
+    assert result.has_transcript is True
+    assert result.keyframe_count == 2
+    assert [value for value, _message in progress] == sorted(value for value, _message in progress)
+    assert any(message == "Local Whisper transcription complete" for _value, message in progress)
+
+
+def test_zero_moment_full_whisper_reports_both_outcomes_and_actionable_read_errors(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer(transcript_texts=())
+
+    def transcribe(
+        _media_path: Path,
+        **_kwargs: object,
+    ) -> tuple[AcquiredTranscriptSegment, ...]:
+        return (AcquiredTranscriptSegment(0, 1, "speech survived", origin="whisper"),)
+
+    def extract(
+        _media_path: Path,
+        _work_dir: Path,
+        **_kwargs: object,
+    ) -> list[ExtractedVisualMoment]:
+        return []
+
+    service = KeyframeService(
+        settings=settings,
+        acquire=acquire,
+        extract_visuals=extract,
+        transcribe=transcribe,
+        has_whisper=lambda: True,
+    )
+    result = service.ingest(
+        str(source),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.WHISPER,
+    )
+
+    assert result.visual_coverage is VisualCoverage.FULL
+    assert result.keyframe_count == 0
+    assert any("No stable visual moments" in warning for warning in result.warnings)
+    assert "Used local Whisper speech transcription." in result.warnings
+    with pytest.raises(CacheError, match="full visual index"):
+        service.get_code(result.video_id, t=1)
+    with pytest.raises(CacheError, match="Full visual indexing completed"):
+        service.get_frame(result.video_id, t=1)
+
+
+def test_failed_parallel_whisper_removes_visual_run_and_publishes_nothing(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer(transcript_texts=())
+    visuals_finished = threading.Event()
+    base_extractor = _fake_visual_extractor()
+
+    def transcribe(
+        _media_path: Path,
+        **_kwargs: object,
+    ) -> tuple[AcquiredTranscriptSegment, ...]:
+        assert visuals_finished.wait(timeout=2)
+        raise ExtractionError("simulated isolated Whisper failure")
+
+    def extract(
+        media_path: Path,
+        work_dir: Path,
+        **kwargs: object,
+    ) -> list[ExtractedVisualMoment]:
+        moments = base_extractor(media_path, work_dir, **kwargs)
+        visuals_finished.set()
+        return moments
+
+    service = KeyframeService(
+        settings=settings,
+        acquire=acquire,
+        extract_visuals=extract,
+        transcribe=transcribe,
+        has_whisper=lambda: True,
+    )
+
+    with pytest.raises(ExtractionError, match="simulated isolated Whisper failure"):
+        service.ingest(
+            str(source),
+            mode=IngestMode.FULL,
+            transcript_mode=TranscriptMode.WHISPER,
         )
 
     assert service.store.find_by_source(str(source), pipeline_version=PIPELINE_VERSION) is None

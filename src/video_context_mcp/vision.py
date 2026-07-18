@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -37,6 +38,10 @@ from video_context_mcp.constants import (
     MAX_IMAGE_EDGE,
     MIN_STABLE_SECONDS,
     PHASH_DISTANCE_THRESHOLD,
+    VISUAL_PROBE_CHAPTER_CANDIDATES,
+    VISUAL_PROBE_MAX_EDGE,
+    VISUAL_PROBE_MAX_MOMENTS,
+    VISUAL_PROBE_UNIFORM_CANDIDATES,
 )
 from video_context_mcp.errors import ExtractionError
 
@@ -49,6 +54,8 @@ _FFPROBE_TIMEOUT_S = 15.0
 _FRAME_SAMPLING_MIN_TIMEOUT_S = 60.0
 _FRAME_SAMPLING_MAX_TIMEOUT_S = 1_800.0
 _TESSERACT_TIMEOUT_S = 30.0
+_PROBE_FRAME_TIMEOUT_S = 30.0
+_DEFAULT_OCR_WORKERS = max(1, min(2, os.cpu_count() or 1))
 _SHOWINFO_TIMESTAMP_RE = re.compile(
     r"\bn:\s*(?P<index>\d+)\s+pts:\s*\S+\s+pts_time:"
     r"(?P<timestamp>[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\b"
@@ -139,6 +146,18 @@ class EncodedImage:
     mime_type: str
     width: int
     height: int
+
+
+@dataclass(frozen=True, slots=True)
+class VisualProbePlan:
+    """Deterministic chapter-priority and uniform timestamps for sparse scouting."""
+
+    chapter_timestamps_s: tuple[float, ...]
+    uniform_timestamps_s: tuple[float, ...]
+
+    @property
+    def candidate_count(self) -> int:
+        return len(self.chapter_timestamps_s) + len(self.uniform_timestamps_s)
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +387,201 @@ def sample_frames(
             )
         )
     return sampled
+
+
+def plan_visual_probe(
+    duration_s: float,
+    chapters: Sequence[tuple[float, float]],
+    *,
+    chapter_candidates: int = VISUAL_PROBE_CHAPTER_CANDIDATES,
+    uniform_candidates: int = VISUAL_PROBE_UNIFORM_CANDIDATES,
+) -> VisualProbePlan:
+    """Plan bounded timestamps that cover chapters and the whole timeline."""
+
+    if duration_s <= 0 or not math.isfinite(duration_s):
+        raise ValueError("duration_s must be a positive finite number")
+    if chapter_candidates < 0 or uniform_candidates < 1:
+        raise ValueError("probe candidate counts must be non-negative and include uniform frames")
+
+    normalized_chapters: list[tuple[float, float]] = []
+    for start_s, end_s in chapters:
+        if not math.isfinite(start_s) or not math.isfinite(end_s) or end_s < start_s:
+            continue
+        start = min(duration_s, max(0.0, start_s))
+        end = min(duration_s, max(start, end_s))
+        normalized_chapters.append((start, end))
+    normalized_chapters.sort()
+
+    all_chapter_times = _deduplicate_timestamps(
+        [
+            _clamp_probe_timestamp(start_s + (end_s - start_s) * 0.5, duration_s)
+            for start_s, end_s in normalized_chapters
+        ]
+    )
+    selected_count = min(chapter_candidates, len(all_chapter_times))
+    chapter_times = [
+        all_chapter_times[index]
+        for index in _evenly_spaced_indexes(len(all_chapter_times), selected_count)
+    ]
+
+    duration_scaled_uniform_count = max(4, math.ceil(duration_s / 30.0))
+    uniform_count = min(uniform_candidates, duration_scaled_uniform_count)
+    uniform_times = [
+        _clamp_probe_timestamp((index + 0.5) * duration_s / uniform_count, duration_s)
+        for index in range(uniform_count)
+    ]
+
+    unique_chapters = chapter_times
+    unique_uniform = _deduplicate_timestamps(
+        [
+            value
+            for value in uniform_times
+            if all(abs(value - chapter) > 0.05 for chapter in unique_chapters)
+        ]
+    )
+    return VisualProbePlan(tuple(unique_chapters), tuple(unique_uniform))
+
+
+def _evenly_spaced_indexes(length: int, count: int) -> tuple[int, ...]:
+    if count <= 0 or length <= 0:
+        return ()
+    if count >= length:
+        return tuple(range(length))
+    if count == 1:
+        return (length // 2,)
+    return tuple(round(index * (length - 1) / (count - 1)) for index in range(count))
+
+
+def _clamp_probe_timestamp(timestamp_s: float, duration_s: float) -> float:
+    latest = max(0.0, duration_s - min(0.05, duration_s * 0.01))
+    return min(latest, max(0.0, timestamp_s))
+
+
+def _deduplicate_timestamps(values: Sequence[float]) -> list[float]:
+    deduplicated: list[float] = []
+    for value in sorted(values):
+        if not deduplicated or abs(value - deduplicated[-1]) > 0.05:
+            deduplicated.append(value)
+    return deduplicated
+
+
+def sample_frames_at_timestamps(
+    video_path: Path,
+    work_dir: Path,
+    timestamps_s: Sequence[float],
+    *,
+    max_edge: int = VISUAL_PROBE_MAX_EDGE,
+    ffmpeg_binary: str = "ffmpeg",
+    workers: int = _DEFAULT_OCR_WORKERS,
+) -> list[SampledFrame]:
+    """Seek to a bounded list of timestamps without decoding the full timeline."""
+
+    if not video_path.is_file():
+        raise ExtractionError(f"Video file does not exist or is not a file: {video_path}")
+    if max_edge < 64:
+        raise ValueError("max_edge must be at least 64 pixels")
+    if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
+        raise ValueError("workers must be a positive integer")
+    if any(value < 0 or not math.isfinite(value) for value in timestamps_s):
+        raise ValueError("probe timestamps must be finite non-negative numbers")
+    normalized = _deduplicate_timestamps(timestamps_s)
+    if not normalized:
+        return []
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    frame_dir = Path(tempfile.mkdtemp(prefix="probe-frames-", dir=work_dir))
+
+    def sample(index: int, requested_t: float) -> SampledFrame:
+        output_path = frame_dir / f"frame-{index:05d}.jpg"
+        command = [
+            ffmpeg_binary,
+            "-hide_banner",
+            "-loglevel",
+            "info",
+            "-nostats",
+            "-nostdin",
+            "-ss",
+            f"{requested_t:.6f}",
+            "-copyts",
+            "-i",
+            str(video_path),
+            "-map",
+            "0:v:0",
+            "-an",
+            "-sn",
+            "-dn",
+            "-frames:v",
+            "1",
+            "-vf",
+            (
+                f"scale=w='min(iw,{max_edge})':h='min(ih,{max_edge})':"
+                "force_original_aspect_ratio=decrease:force_divisible_by=2,showinfo"
+            ),
+            "-fps_mode",
+            "passthrough",
+            "-q:v",
+            "2",
+            "-update",
+            "1",
+            "-y",
+            str(output_path),
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=_PROBE_FRAME_TIMEOUT_S,
+            )
+        except FileNotFoundError as exc:
+            raise ExtractionError(
+                f"FFmpeg executable '{ffmpeg_binary}' was not found; install FFmpeg and retry"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ExtractionError(
+                f"FFmpeg timed out after {_PROBE_FRAME_TIMEOUT_S:.0f}s while probing frame "
+                f"{requested_t:.3f}s"
+            ) from exc
+        except OSError as exc:
+            raise ExtractionError(f"Could not start FFmpeg visual probe: {exc}") from exc
+        if completed.returncode != 0 or not output_path.is_file():
+            detail = completed.stderr.strip() or completed.stdout.strip() or "no diagnostic output"
+            raise ExtractionError(
+                f"FFmpeg could not extract probe frame at {requested_t:.3f}s: {detail[-2_000:]}"
+            )
+        actual_t = _first_showinfo_timestamp(completed.stderr, fallback=requested_t)
+        return SampledFrame(actual_t, output_path, perceptual_hash(output_path))
+
+    worker_count = min(workers, len(normalized))
+    with ThreadPoolExecutor(
+        max_workers=worker_count,
+        thread_name_prefix="keyframe-probe",
+    ) as executor:
+        futures: dict[Future[SampledFrame], int] = {
+            executor.submit(sample, index, timestamp_s): index
+            for index, timestamp_s in enumerate(normalized)
+        }
+        ordered: dict[int, SampledFrame] = {}
+        try:
+            for future in as_completed(futures):
+                ordered[futures[future]] = future.result()
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
+    return [ordered[index] for index in range(len(normalized))]
+
+
+def _first_showinfo_timestamp(stderr: str, *, fallback: float) -> float:
+    for match in _SHOWINFO_TIMESTAMP_RE.finditer(stderr):
+        timestamp = float(match.group("timestamp"))
+        if int(match.group("index")) == 0 and math.isfinite(timestamp):
+            return max(0.0, timestamp)
+    return fallback
 
 
 def _sample_interval(frames: Sequence[SampledFrame]) -> float:
@@ -964,6 +1178,149 @@ def analyze_stable_run(
     )
 
 
+def _analyze_runs(
+    runs: Sequence[StableRun],
+    *,
+    node_binary: str,
+    tesseract_config: str,
+    tesseract_binary: str,
+    ocr_workers: int,
+    analysis_message: str,
+    progress: ProgressCallback | None,
+) -> list[VisualMoment]:
+    if not runs:
+        return []
+    if progress is not None:
+        progress(analysis_message, 0.2)
+    worker_count = min(ocr_workers, len(runs))
+    with ThreadPoolExecutor(
+        max_workers=worker_count,
+        thread_name_prefix="keyframe-ocr",
+    ) as executor:
+        futures: dict[Future[VisualMoment], int] = {
+            executor.submit(
+                analyze_stable_run,
+                run,
+                node_binary=node_binary,
+                tesseract_config=tesseract_config,
+                tesseract_binary=tesseract_binary,
+            ): index
+            for index, run in enumerate(runs)
+        }
+        ordered: dict[int, VisualMoment] = {}
+        try:
+            for completed_count, future in enumerate(as_completed(futures), start=1):
+                ordered[futures[future]] = future.result()
+                if progress is not None:
+                    progress(
+                        analysis_message,
+                        0.2 + (completed_count / len(runs)) * 0.8,
+                    )
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
+    return [ordered[index] for index in range(len(runs))]
+
+
+def _select_visual_probe_frames(
+    chapter_frames: Sequence[SampledFrame],
+    uniform_frames: Sequence[SampledFrame],
+    *,
+    max_moments: int,
+) -> list[SampledFrame]:
+    """Keep chapter coverage, then add the most perceptually diverse candidates."""
+
+    if max_moments < 1:
+        raise ValueError("max_moments must be a positive integer")
+    selected = list(chapter_frames[:max_moments])
+    pool = list(uniform_frames)
+    while pool and len(selected) < max_moments:
+        if selected:
+            best = max(
+                pool,
+                key=lambda candidate: (
+                    min(phash_distance(candidate.phash, retained.phash) for retained in selected),
+                    -candidate.timestamp_s,
+                ),
+            )
+        else:
+            best = pool[0]
+        selected.append(best)
+        pool.remove(best)
+    return sorted(selected, key=lambda frame: frame.timestamp_s)
+
+
+def extract_visual_probe(
+    video_path: Path,
+    work_dir: Path,
+    *,
+    chapter_timestamps_s: Sequence[float],
+    uniform_timestamps_s: Sequence[float],
+    max_moments: int = VISUAL_PROBE_MAX_MOMENTS,
+    max_edge: int = VISUAL_PROBE_MAX_EDGE,
+    ffmpeg_binary: str = "ffmpeg",
+    ffprobe_binary: str = "ffprobe",
+    node_binary: str = "node",
+    tesseract_config: str = "--psm 6",
+    tesseract_binary: str = "tesseract",
+    ocr_workers: int = _DEFAULT_OCR_WORKERS,
+    progress: ProgressCallback | None = None,
+) -> list[VisualMoment]:
+    """Extract a bounded visual scout without scanning the full timeline."""
+
+    del ffprobe_binary  # Exact seek targets come from validated acquisition metadata.
+    if not isinstance(max_moments, int) or isinstance(max_moments, bool) or max_moments < 1:
+        raise ValueError("max_moments must be a positive integer")
+    if not isinstance(ocr_workers, int) or isinstance(ocr_workers, bool) or ocr_workers < 1:
+        raise ValueError("ocr_workers must be a positive integer")
+    if progress is not None:
+        progress("Sampling sparse visual probe", 0.0)
+    chapter_frames = sample_frames_at_timestamps(
+        video_path,
+        work_dir / "chapters",
+        chapter_timestamps_s,
+        max_edge=max_edge,
+        ffmpeg_binary=ffmpeg_binary,
+        workers=ocr_workers,
+    )
+    uniform_frames = sample_frames_at_timestamps(
+        video_path,
+        work_dir / "uniform",
+        uniform_timestamps_s,
+        max_edge=max_edge,
+        ffmpeg_binary=ffmpeg_binary,
+        workers=ocr_workers,
+    )
+    selected = _select_visual_probe_frames(
+        chapter_frames,
+        uniform_frames,
+        max_moments=max_moments,
+    )
+    runs = [
+        StableRun(
+            start_s=frame.timestamp_s,
+            end_s=frame.timestamp_s,
+            stable_seconds=0.0,
+            frames=(frame,),
+            representative=frame,
+        )
+        for frame in selected
+    ]
+    moments = _analyze_runs(
+        runs,
+        node_binary=node_binary,
+        tesseract_config=tesseract_config,
+        tesseract_binary=tesseract_binary,
+        ocr_workers=ocr_workers,
+        analysis_message="Analyzing sparse probe frames",
+        progress=progress,
+    )
+    if progress is not None:
+        progress("Sparse visual probe complete", 1.0)
+    return moments
+
+
 def extract_visual_moments(
     video_path: Path,
     work_dir: Path,
@@ -977,9 +1334,13 @@ def extract_visual_moments(
     min_stable_seconds: float = MIN_STABLE_SECONDS,
     tesseract_config: str = "--psm 6",
     tesseract_binary: str = "tesseract",
+    ocr_workers: int = _DEFAULT_OCR_WORKERS,
     progress: ProgressCallback | None = None,
 ) -> list[VisualMoment]:
     """Sample, stabilize, OCR, and classify a video into visual moments."""
+
+    if not isinstance(ocr_workers, int) or isinstance(ocr_workers, bool) or ocr_workers < 1:
+        raise ValueError("ocr_workers must be a positive integer")
 
     if progress is not None:
         progress("Sampling video frames", 0.0)
@@ -996,19 +1357,15 @@ def extract_visual_moments(
         distance_threshold=distance_threshold,
         min_stable_seconds=min_stable_seconds,
     )
-    moments: list[VisualMoment] = []
-    total = max(1, len(runs))
-    for index, run in enumerate(runs):
-        if progress is not None:
-            progress("Analyzing stable frames", 0.2 + (index / total) * 0.8)
-        moments.append(
-            analyze_stable_run(
-                run,
-                node_binary=node_binary,
-                tesseract_config=tesseract_config,
-                tesseract_binary=tesseract_binary,
-            )
-        )
+    moments = _analyze_runs(
+        runs,
+        node_binary=node_binary,
+        tesseract_config=tesseract_config,
+        tesseract_binary=tesseract_binary,
+        ocr_workers=ocr_workers,
+        analysis_message="Analyzing stable frames",
+        progress=progress,
+    )
     if progress is not None:
         progress("Visual extraction complete", 1.0)
     return moments

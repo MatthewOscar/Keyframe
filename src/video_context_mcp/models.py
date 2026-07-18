@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from video_context_mcp.constants import PIPELINE_VERSION
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
@@ -12,6 +14,12 @@ class StrictModel(BaseModel):
 
 class IngestMode(StrEnum):
     FAST = "fast"
+    FULL = "full"
+
+
+class VisualCoverage(StrEnum):
+    NONE = "none"
+    PROBE = "probe"
     FULL = "full"
 
 
@@ -87,6 +95,7 @@ class VideoRecord(StrictModel):
     has_transcript: bool
     transcript_mode: TranscriptMode = TranscriptMode.AUTO
     indexed_mode: IngestMode
+    visual_coverage: VisualCoverage
     keyframe_count: Annotated[int, Field(ge=0)] = 0
     status: str = "ready"
     warnings: tuple[str, ...] = ()
@@ -107,10 +116,11 @@ class IngestResult(StrictModel):
     transcript_mode: TranscriptMode = TranscriptMode.AUTO
     keyframe_count: int
     indexed_mode: IngestMode
+    visual_coverage: VisualCoverage = VisualCoverage.NONE
     status: str
     warnings: tuple[str, ...] = ()
     cache_hit: bool
-    pipeline_version: str = "1"
+    pipeline_version: str = PIPELINE_VERSION
 
 
 class TranscriptPage(StrictModel):
@@ -136,6 +146,7 @@ class MomentSummary(StrictModel):
 class MomentPage(StrictModel):
     video_id: str
     moments: tuple[MomentSummary, ...]
+    visual_coverage: VisualCoverage = VisualCoverage.NONE
     next_cursor: str | None = None
     has_more: bool = False
 
@@ -154,6 +165,7 @@ class SearchHit(StrictModel):
 class SearchPage(StrictModel):
     query: str
     hits: tuple[SearchHit, ...]
+    visual_coverage: VisualCoverage | None = None
     next_cursor: str | None = None
     has_more: bool = False
 
@@ -169,6 +181,7 @@ class CodeResult(StrictModel):
     confidence: float
     classification_confidence: float = 0.0
     kind: MomentKind
+    visual_coverage: VisualCoverage = VisualCoverage.NONE
     notes: tuple[str, ...] = ()
 
 
@@ -179,6 +192,7 @@ class FrameResult(StrictModel):
     actual_t: float
     kind: MomentKind
     region: FrameRegion
+    visual_coverage: VisualCoverage = VisualCoverage.NONE
 
 
 class CodeSelector(StrictModel):
