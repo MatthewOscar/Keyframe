@@ -1,0 +1,20 @@
+{
+  "name": "keyframe",
+  "interface": {
+    "displayName": "Keyframe"
+  },
+  "plugins": [
+    {
+      "name": "keyframe",
+      "source": {
+        "source": "local",
+        "path": "./plugins/keyframe"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

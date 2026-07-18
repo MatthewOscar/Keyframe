@@ -1,0 +1,82 @@
+{
+  "schema_version": "1",
+  "suite": "keyframe-v0.1.0",
+  "description": "Ten reproducible prompts for a prepared first-party tutorial fixture and demo target.",
+  "variables": {
+    "VIDEO_SOURCE": "Path or public URL supplied by the evaluator",
+    "VIDEO_ID": "ID returned by the first ingest",
+    "DEMO_TARGET": "examples/demo_target"
+  },
+  "cases": [
+    {
+      "id": "ingest-fast",
+      "name": "Fast ingest establishes identity",
+      "prompt": "Use Keyframe to ingest {{VIDEO_SOURCE}} in fast mode. Report the video ID, title, duration, transcript availability, cache status, warnings, and no unsupported claims.",
+      "expected_tools": ["video_ingest"],
+      "success_criteria": ["Returns one stable video ID", "Reports fast indexed mode", "Does not claim visual OCR is available unless it is"]
+    },
+    {
+      "id": "search-said",
+      "name": "Find spoken evidence",
+      "prompt": "In {{VIDEO_ID}}, search only what was said about the fixture's golden concept. Return the three strongest hits with timestamps and concise context.",
+      "expected_tools": ["video_search"],
+      "success_criteria": ["Scopes search to said", "Expected spoken segment ranks in the top three", "Every hit has a timestamp"]
+    },
+    {
+      "id": "search-shown",
+      "name": "Escalate for shown evidence",
+      "prompt": "Find where the fixture's golden code symbol is shown in {{VIDEO_ID}}. If visual evidence is not indexed, upgrade the same video to full mode, then return the best three shown hits.",
+      "expected_tools": ["video_search", "video_ingest"],
+      "success_criteria": ["Escalates only when required", "Scopes final search to shown", "Expected OCR moment ranks in the top three"]
+    },
+    {
+      "id": "search-said-and-shown",
+      "name": "Connect narration and screen evidence",
+      "prompt": "Using {{VIDEO_ID}}, explain how the spoken rationale connects to the code shown on screen. Search both channels and cite the precise moments used.",
+      "expected_tools": ["video_search"],
+      "success_criteria": ["Uses said and shown evidence", "Distinguishes retrieval from inference", "Cites at least one precise moment from each channel"]
+    },
+    {
+      "id": "transcript-window",
+      "name": "Page a transcript window",
+      "prompt": "Retrieve transcript context around the best spoken hit in {{VIDEO_ID}} without dumping the entire transcript. Follow a cursor only if the explanation crosses the first page.",
+      "expected_tools": ["video_search", "video_get_transcript"],
+      "success_criteria": ["Uses a bounded time range", "Preserves chronological timestamps", "Uses opaque cursor unchanged when paging"]
+    },
+    {
+      "id": "moments-filter",
+      "name": "Browse code-like moments",
+      "prompt": "List code moments in {{VIDEO_ID}} in stable pages. Summarize each timestamp, OCR preview, stability, and confidence without treating classification as certain.",
+      "expected_tools": ["video_list_moments"],
+      "success_criteria": ["Filters for code", "Does not duplicate or skip moments across one cursor boundary", "Preserves heuristic uncertainty"]
+    },
+    {
+      "id": "code-source-frame",
+      "name": "Verify reconstructed code",
+      "prompt": "Retrieve the strongest golden code moment from {{VIDEO_ID}}. Compare reconstructed code, parse status, confidence, and the attached crop; call out any character you cannot verify.",
+      "expected_tools": ["video_search", "video_get_code"],
+      "success_criteria": ["Uses exactly one moment ID or timestamp", "Inspects the attached image", "Never upgrades false or null parse status to success"]
+    },
+    {
+      "id": "frame-nearest",
+      "name": "Inspect the nearest frame",
+      "prompt": "Get the nearest full frame to the fixture's requested timestamp in {{VIDEO_ID}}. Report both requested and actual time and describe only visible evidence.",
+      "expected_tools": ["video_get_frame"],
+      "success_criteria": ["Reports requested and actual timestamps", "Returns an MCP image", "Does not infer content absent from the frame"]
+    },
+    {
+      "id": "cache-idempotence",
+      "name": "Reuse a completed ingest",
+      "prompt": "Ingest {{VIDEO_SOURCE}} again with the completed mode and no refresh. Confirm whether Keyframe reused the same identity and cache; do not time a network download as cached work.",
+      "expected_tools": ["video_ingest"],
+      "success_criteria": ["Returns the same video ID", "Reports a cache hit", "Completes within the cached-response acceptance target"]
+    },
+    {
+      "id": "headline-tested-change",
+      "name": "Video evidence to tested code change",
+      "prompt": "Use {{VIDEO_ID}} to implement the demonstrated behavior in {{DEMO_TARGET}}. Search said and shown evidence, verify the code against its frame, make the smallest justified edit, run the demo-target tests, and summarize the result with timestamps.",
+      "expected_tools": ["video_search", "video_get_code", "video_get_frame"],
+      "success_criteria": ["GPT-5.6 performs the repository reasoning and edit", "Relevant tests pass", "Final answer cites the exact evidence moments", "Uncertain OCR is not silently invented"]
+    }
+  ]
+}

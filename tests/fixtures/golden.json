@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "fixture": "keyframe-synthetic.mp4",
+  "sha256": "b10ddda138d8061c754b9a6debe499a80b5c8a5aaf027e2d2ab9ef477f7dea0b",
+  "video_id": "local-b10ddda138d8061c",
+  "license": "Apache-2.0",
+  "generated": true,
+  "metadata": {
+    "title": "Keyframe First-Party Synthetic Fixture",
+    "duration_s": 10.0,
+    "duration_tolerance_s": 0.15,
+    "width": 1280,
+    "height": 720,
+    "fps": 30.0
+  },
+  "transcript": {
+    "segment_count": 3,
+    "golden_query": "normalizing non-alphanumeric",
+    "expected_start_s": 3.0,
+    "expected_text": "Define slugify title by trimming and lowercasing the value, then normalizing non-alphanumeric separators into hyphens."
+  },
+  "visual": {
+    "golden_query": "slugify",
+    "expected_symbol": "slugify_title",
+    "expected_start_s": 3.0,
+    "expected_end_s": 7.0,
+    "requested_frame_s": 4.5,
+    "expected_kind": "code",
+    "parse_policy": "parse-valid-or-honest-fallback"
+  }
+}

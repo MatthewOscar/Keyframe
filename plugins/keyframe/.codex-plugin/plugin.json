@@ -1,0 +1,43 @@
+{
+  "name": "keyframe",
+  "version": "0.1.0",
+  "description": "Index videos locally and retrieve timestamped transcript, OCR, code, and frames through MCP.",
+  "author": {
+    "name": "Matthew Oscar",
+    "url": "https://github.com/MatthewOscar"
+  },
+  "homepage": "https://github.com/MatthewOscar/Keyframe#readme",
+  "repository": "https://github.com/MatthewOscar/Keyframe",
+  "license": "Apache-2.0",
+  "keywords": [
+    "video",
+    "mcp",
+    "ocr",
+    "developer-tools",
+    "rag"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Keyframe",
+    "shortDescription": "Search what tutorials say and show",
+    "longDescription": "Keyframe locally indexes public or local videos, then retrieves timestamped transcript, on-screen text, reconstructed code, and source frames for verification.",
+    "developerName": "Matthew Oscar",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Local video indexing",
+      "Transcript and OCR search",
+      "Timestamped frame retrieval"
+    ],
+    "websiteURL": "https://github.com/MatthewOscar/Keyframe",
+    "defaultPrompt": [
+      "Index this tutorial and cite where the key idea is said and shown.",
+      "Find code shown in this video and verify it against the source frame.",
+      "Use this video to implement the demonstrated change and run its tests."
+    ],
+    "brandColor": "#0F766E",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/logo-light.svg",
+    "logoDark": "./assets/logo-dark.svg"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": "3",
+  "obtained_at": "2026-07-18",
+  "extraction_engine": "yt-dlp 2026.7.4",
+  "id": "XazswkTqKJI",
+  "title": "11 How to declare a new function - Python Tutorial for Beginners (Interactive and Auto-graded)",
+  "uploader": "4Geeks Academy",
+  "uploader_id": "@4GeeksAcademy_",
+  "channel_url": "https://www.youtube.com/channel/UCitU2n403UUU6MFkrYRWaRQ",
+  "webpage_url": "https://www.youtube.com/watch?v=XazswkTqKJI",
+  "duration_s": 158,
+  "upload_date": "2020-04-19",
+  "license_label": "Creative Commons Attribution license (reuse allowed)",
+  "license_interpretation": "CC BY 3.0 based on the upload date and YouTube's historical licensing",
+  "availability": "public",
+  "age_limit": 0,
+  "live_status": "not_live",
+  "music_metadata": {
+    "track": null,
+    "artist": null,
+    "album": null
+  },
+  "derived_cache": {
+    "pipeline_version": "1",
+    "video_id": "youtube-XazswkTqKJI-186e345191",
+    "transcript_segments": 120,
+    "visual_moments": 3,
+    "original_media_retained": false
+  }
+}
