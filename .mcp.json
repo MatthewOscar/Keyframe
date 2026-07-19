@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "keyframe": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${CLAUDE_PROJECT_DIR:-.}",
+        "video-context-mcp",
+        "serve",
+        "--transport",
+        "stdio"
+      ],
+      "timeout": 1900000
+    }
+  }
+}

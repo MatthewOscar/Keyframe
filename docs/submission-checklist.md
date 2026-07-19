@@ -8,7 +8,8 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 - [x] Developer Tools project built with Codex and intended for GPT-5.6.
 - [x] Installable local project with an exact Python 3.12 dependency lock.
 - [x] Public-repository licensing (`Apache-2.0`) and third-party notices.
-- [x] Plugin installation instructions and supported-platform notes.
+- [x] Plugin and direct-MCP instructions for Codex, Claude Code, Cursor, and
+      Antigravity/Agy, with supported-platform notes.
 - [x] A network-free, first-party fixture that judges can test immediately.
 - [x] README explanation of Codex collaboration and human decisions.
 - [x] Reproducible eval prompts, including video evidence to a tested change.
@@ -22,6 +23,8 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
       or retain the exact Git-tag launcher already bundled in the plugin.
 - [ ] Install the tagged plugin in Codex and ChatGPT desktop and run the
       headline flow with Codex visibly configured to `gpt-5.6`.
+- [ ] Smoke-install the tagged release in Claude Code, Cursor, and Agy; approve
+      Keyframe, list all six tools, and run one cached query in each client.
 - [ ] Upload the first-party synthetic source video and its WebVTT captions as
       a public YouTube tutorial for the remote-ingest demo shot.
 - [ ] Run all ten prompts in `evals/cases.json` and record observed outcomes.

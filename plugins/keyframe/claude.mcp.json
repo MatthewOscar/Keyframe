@@ -1,6 +1,7 @@
 {
   "mcpServers": {
     "keyframe": {
+      "type": "stdio",
       "command": "uvx",
       "args": [
         "--python",
@@ -12,8 +13,7 @@
         "--transport",
         "stdio"
       ],
-      "startup_timeout_sec": 180,
-      "tool_timeout_sec": 1900
+      "timeout": 1900000
     }
   }
 }

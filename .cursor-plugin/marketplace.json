@@ -1,0 +1,17 @@
+{
+  "name": "keyframe",
+  "owner": {
+    "name": "Matthew Oscar"
+  },
+  "metadata": {
+    "description": "Keyframe local video retrieval tools and timestamp-aware agent workflow.",
+    "pluginRoot": "plugins"
+  },
+  "plugins": [
+    {
+      "name": "keyframe",
+      "source": "keyframe",
+      "description": "Search what tutorials say and show, then verify source frames before using OCR."
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "name": "keyframe",
+  "owner": {
+    "name": "Matthew Oscar"
+  },
+  "description": "Keyframe local video retrieval tools and timestamp-aware agent workflow.",
+  "plugins": [
+    {
+      "name": "keyframe",
+      "source": "./plugins/keyframe",
+      "description": "Search what tutorials say and show, then verify source frames before using OCR.",
+      "author": {
+        "name": "Matthew Oscar"
+      },
+      "homepage": "https://github.com/MatthewOscar/Keyframe#readme",
+      "repository": "https://github.com/MatthewOscar/Keyframe",
+      "license": "Apache-2.0",
+      "keywords": [
+        "video",
+        "mcp",
+        "ocr",
+        "rag"
+      ],
+      "category": "developer-tools",
+      "tags": [
+        "video",
+        "search",
+        "local-ai"
+      ],
+      "strict": true
+    }
+  ]
+}

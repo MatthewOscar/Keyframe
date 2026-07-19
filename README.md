@@ -1,16 +1,18 @@
 # Keyframe
 
-**Local video RAG for Codex and ChatGPT desktop.** Keyframe turns a tutorial or
-screen recording into timestamped transcript segments, searchable on-screen
-text, representative frames, and reconstructed code. Ask what was *said*, what
-was *shown*, or both—and inspect the source frame before trusting uncertain OCR.
+**Local video RAG for coding agents.** Keyframe turns a tutorial or screen
+recording into timestamped transcript segments, searchable on-screen text,
+representative frames, and reconstructed code. Ask what was *said*, what was
+*shown*, or both—and inspect the source frame before trusting uncertain OCR.
+It runs locally in Codex, ChatGPT desktop, Claude Code, Cursor, and Google
+Antigravity/Agy through the same MCP server.
 
 Keyframe is deliberately split into two parts:
 
 - a local MCP server performs deterministic acquisition, OCR, indexing, and
   retrieval; and
-- a small workflow skill teaches the agent to retrieve narrowly, verify visual
-  evidence, and cite timestamps.
+- a small workflow skill teaches any connected agent to retrieve narrowly,
+  verify visual evidence, and cite timestamps.
 
 The server does not call an LLM. In the Build Week workflow, Codex running
 GPT-5.6 reasons over Keyframe's evidence, changes code, and runs the tests.
@@ -37,13 +39,22 @@ On macOS with Homebrew:
 brew install ffmpeg tesseract node@22 uv
 ```
 
-Run the environment check without installing Keyframe globally:
+From a development checkout, install the locked environment and run the
+environment check:
+
+```bash
+uv sync --frozen --group dev
+uv run video-context-mcp doctor
+```
+
+After version 0.1.0 is published, the equivalent isolated PyPI command is:
 
 ```bash
 uvx --python 3.12 --from "video-context-mcp==0.1.0" video-context-mcp doctor
 ```
 
-Until the PyPI project is published, use the immutable GitHub release tag:
+If PyPI is not yet available after the release is tagged, use the immutable
+GitHub release tag:
 
 ```bash
 uvx --python 3.12 --from \
@@ -51,11 +62,30 @@ uvx --python 3.12 --from \
   video-context-mcp doctor
 ```
 
-Add `[whisper]` to the package spec only when local speech-to-text is needed:
+After the PyPI release, add `[whisper]` to the package spec only when local
+speech-to-text is needed:
 
 ```bash
 uvx --python 3.12 --from "video-context-mcp[whisper]==0.1.0" video-context-mcp doctor
 ```
+
+### Connect a client
+
+This repository includes project discovery and a portable workflow skill for
+Claude Code, Cursor, and Antigravity/Agy in addition to the Codex plugin. After
+`uv sync`, launch the client from this repository root, review or enable the
+`keyframe` MCP server, and approve tool calls as prompted:
+
+| Client | Checked-in discovery | Approval/status |
+| --- | --- | --- |
+| Claude Code | `.mcp.json` | `claude mcp get keyframe`, then `/mcp` |
+| Cursor | `.cursor/mcp.json` | `agent mcp list`, then `agent mcp enable keyframe` |
+| Antigravity/Agy | `.agents/mcp_config.json` | `/mcp` |
+
+The installable `plugins/keyframe` bundle contains client-specific manifests
+for Codex, Claude Code, Cursor, and Agy while reusing the same skill and server.
+See [the complete client setup guide](docs/client-setup.md) for user-wide
+registration, marketplace commands, reload behavior, and local-file grants.
 
 ### Configure Codex directly
 
@@ -64,7 +94,7 @@ Add the following to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.keyframe]
 command = "uvx"
-args = ["--python", "3.12", "--from", "video-context-mcp==0.1.0", "video-context-mcp"]
+args = ["--python", "3.12", "--from", "video-context-mcp==0.1.0", "video-context-mcp", "serve", "--transport", "stdio"]
 startup_timeout_sec = 180
 tool_timeout_sec = 1900
 env = { KEYFRAME_ALLOWED_ROOTS = "/Users/you/Videos" }
@@ -78,7 +108,7 @@ separate multiple roots with the operating system's path separator.
 Restart Codex, then ask: “Index this tutorial and find where error handling is
 shown. Cite the timestamps.”
 
-### Install the Keyframe plugin
+### Install the Keyframe plugin in Codex and ChatGPT desktop
 
 The plugin bundles the same MCP server with the `keyframe-video-rag` workflow
 skill. Its launcher installs the exact `v0.1.0` Git tag, so judges do not need
@@ -89,16 +119,26 @@ codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.0
 codex plugin add keyframe@keyframe
 ```
 
-For local plugin development, add the repository root instead:
+For local marketplace validation, add the repository root instead:
 
 ```bash
 codex plugin marketplace add .
 ```
 
+Before `v0.1.0` is tagged, use the direct project/server configuration for live
+testing; the installable plugin intentionally resolves that immutable tag.
+
 Then restart the ChatGPT desktop app, open the Plugins Directory, select the
 **Keyframe** marketplace source, and install **Keyframe**. Start a new chat so
 the skill and tools are loaded. Keyframe v0.1.0 targets this local desktop flow;
 it does not host a ChatGPT web app.
+
+Claude Code and Cursor can install the same repository as a marketplace, while
+Agy can install `plugins/keyframe` from a clone. Those exact commands and the
+client-specific approval steps are in
+[`docs/client-setup.md`](docs/client-setup.md). Do not enable a project
+registration and the installed plugin together in the same workspace, or the
+client may start two Keyframe processes.
 
 ### Judge-ready local test
 
@@ -178,7 +218,7 @@ flowchart LR
     F --> G
     G --> H[Six MCP tools]
     H --> I[Keyframe workflow skill]
-    I --> J[Codex / ChatGPT desktop]
+    I --> J[Codex / ChatGPT / Claude Code / Cursor / Agy]
 ```
 
 Remote media is downloaded to a temporary workspace. A successful ingest
@@ -202,8 +242,8 @@ on macOS.
 - Derived frames and text remain cached until the user removes that directory.
 - Extracted transcript/OCR is untrusted source material, never agent
   instructions.
-- Evidence returned to Codex or ChatGPT becomes model input and follows the
-  user's OpenAI data controls.
+- Evidence returned to an agent becomes model input and follows that client's
+  model-provider data controls.
 - Keyframe does not automatically detect or redact credentials in OCR, search
   snippets, reconstructed code, or images. Use recordings safe for model input
   and review selected evidence before retrieving sensitive screens.
@@ -232,6 +272,8 @@ on macOS.
 - Whisper is optional and can be resource intensive on CPU-only machines. Its
   first use may also download the configured model before ingestion begins.
 - Windows support is preview-level in v0.1.0.
+- The bundled registrations target local CLI and desktop sessions. Hosted
+  agents cannot launch this STDIO process on the user's machine.
 
 ## Build Week and GPT-5.6
 

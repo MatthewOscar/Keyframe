@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "video-context-mcp"
 version = "0.1.0"
-description = "Local video RAG for Codex and ChatGPT Desktop"
+description = "Local video RAG for MCP-compatible coding agents"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]
 authors = [
   { name = "Matthew Oscar" },
 ]
-keywords = ["mcp", "video", "ocr", "codex", "rag"]
+keywords = ["mcp", "video", "ocr", "codex", "claude-code", "cursor", "rag"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: Apache Software License",

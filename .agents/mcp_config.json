@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "keyframe": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        ".",
+        "video-context-mcp",
+        "serve",
+        "--transport",
+        "stdio"
+      ],
+      "cwd": "."
+    }
+  }
+}

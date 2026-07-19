@@ -1,0 +1,22 @@
+{
+  "name": "keyframe",
+  "displayName": "Keyframe",
+  "version": "0.1.0",
+  "description": "Index videos locally and retrieve timestamped transcript, OCR, code, and frames through MCP.",
+  "author": {
+    "name": "Matthew Oscar",
+    "url": "https://github.com/MatthewOscar"
+  },
+  "homepage": "https://github.com/MatthewOscar/Keyframe#readme",
+  "repository": "https://github.com/MatthewOscar/Keyframe",
+  "license": "Apache-2.0",
+  "keywords": [
+    "video",
+    "mcp",
+    "ocr",
+    "developer-tools",
+    "rag"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./claude.mcp.json"
+}

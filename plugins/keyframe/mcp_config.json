@@ -11,9 +11,7 @@
         "serve",
         "--transport",
         "stdio"
-      ],
-      "startup_timeout_sec": 180,
-      "tool_timeout_sec": 1900
+      ]
     }
   }
 }

@@ -18,6 +18,9 @@ Matthew Oscar selected and approved these decisions:
 - Distribute through PyPI and a repository marketplace plugin.
 - Target Codex and ChatGPT desktop locally through STDIO; defer a hosted
   ChatGPT web app.
+- After core acceptance, add local project and plugin compatibility for Claude
+  Code, Cursor, and Google Antigravity/Agy without changing the deterministic
+  server or the judged Codex/GPT-5.6 reasoning flow.
 - Prefer an honest source-frame fallback over claiming incorrect OCR or parse
   success.
 - Prioritize the six MCP tools and cache ahead of optional Whisper, a gallery,
