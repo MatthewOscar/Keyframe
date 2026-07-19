@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import math
 import os
 import re
@@ -61,6 +62,8 @@ INGEST_ANNOTATIONS = ToolAnnotations(
     idempotentHint=True,
     openWorldHint=False,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def create_server(
@@ -262,6 +265,13 @@ def _translate_errors[R](function: Callable[..., R], *args: Any, **kwargs: Any) 
 
 
 async def _client_roots(ctx: Context[Any, Any, Any] | None) -> tuple[Path, ...]:
+    """Return workspace roots advertised by the MCP client.
+
+    Some clients advertise roots support but fail or hang on ``roots/list``
+    (observed with Cursor). In that case return an empty tuple so ingest can
+    still proceed using ``KEYFRAME_ALLOWED_ROOTS`` from settings.
+    """
+
     if ctx is None:
         return ()
     params = ctx.session.client_params
@@ -270,16 +280,19 @@ async def _client_roots(ctx: Context[Any, Any, Any] | None) -> tuple[Path, ...]:
     try:
         async with asyncio.timeout(10):
             result = await ctx.session.list_roots()
-    except TimeoutError as exc:
-        raise SourceError(
-            "The MCP client did not return its workspace roots within 10 seconds. "
-            "Retry or configure KEYFRAME_ALLOWED_ROOTS explicitly."
-        ) from exc
-    except Exception as exc:
-        raise SourceError(
-            "The MCP client advertised roots support but roots/list failed. "
-            "Retry or configure KEYFRAME_ALLOWED_ROOTS explicitly."
-        ) from exc
+    except TimeoutError:
+        logger.warning(
+            "MCP client did not return workspace roots within 10 seconds; "
+            "falling back to KEYFRAME_ALLOWED_ROOTS"
+        )
+        return ()
+    except Exception:
+        logger.warning(
+            "MCP client advertised roots support but roots/list failed; "
+            "falling back to KEYFRAME_ALLOWED_ROOTS",
+            exc_info=True,
+        )
+        return ()
     if len(result.roots) > _MAX_CLIENT_ROOTS:
         raise SourceError(f"The MCP client returned more than {_MAX_CLIENT_ROOTS} workspace roots.")
     roots: list[Path] = []
