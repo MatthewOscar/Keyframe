@@ -14,6 +14,9 @@ FIXTURE_DIR = (Path(__file__).parent / "fixtures").resolve()
 VIDEO_PATH = FIXTURE_DIR / "keyframe-synthetic.mp4"
 REQUIRED_TOOLS = ("ffmpeg", "ffprobe", "tesseract", "node")
 MISSING_TOOLS = tuple(tool for tool in REQUIRED_TOOLS if shutil.which(tool) is None)
+# This test runs both native visual passes plus MCP process teardown. Shared CI runner
+# throughput varies, so keep this as a deadlock guard rather than a performance assertion.
+REAL_STDIO_PIPELINE_TIMEOUT_S = 60
 
 pytestmark = [
     pytest.mark.integration,
@@ -54,7 +57,7 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
         progress.append((value, total, message))
 
     with (tmp_path / "server.stderr").open("w+", encoding="utf-8") as stderr:
-        with anyio.fail_after(30):
+        with anyio.fail_after(REAL_STDIO_PIPELINE_TIMEOUT_S):
             async with stdio_client(parameters, errlog=stderr) as (read_stream, write_stream):
                 async with ClientSession(
                     read_stream,
