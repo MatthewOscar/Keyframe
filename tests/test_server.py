@@ -23,7 +23,7 @@ from video_context_mcp.models import (
     StrictModel,
     TranscriptPage,
 )
-from video_context_mcp.server import _root_uri_to_path, create_server
+from video_context_mcp.server import _client_roots, _root_uri_to_path, create_server
 
 
 class FakeService:
@@ -95,6 +95,30 @@ def test_mcp_root_uri_is_canonicalized_and_rejects_nonlocal_forms(tmp_path: Path
         _root_uri_to_path("file:///%5C%5Cserver%5Cshare")
     with pytest.raises(SourceError, match="queries"):
         _root_uri_to_path(f"{root.as_uri()}?scope=wide")
+
+
+@pytest.mark.asyncio
+async def test_client_roots_falls_back_when_list_roots_fails() -> None:
+    class BrokenSession:
+        client_params = SimpleNamespace(capabilities=SimpleNamespace(roots=object()))
+
+        async def list_roots(self) -> object:
+            raise RuntimeError("roots/list failed")
+
+    roots = await _client_roots(SimpleNamespace(session=BrokenSession()))
+    assert roots == ()
+
+
+@pytest.mark.asyncio
+async def test_client_roots_falls_back_when_list_roots_times_out() -> None:
+    class TimedOutSession:
+        client_params = SimpleNamespace(capabilities=SimpleNamespace(roots=object()))
+
+        async def list_roots(self) -> object:
+            raise TimeoutError
+
+    roots = await _client_roots(SimpleNamespace(session=TimedOutSession()))
+    assert roots == ()
 
 
 class NonFiniteVisualService(FakeService):
