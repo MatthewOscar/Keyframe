@@ -8,7 +8,9 @@ local-source allowlist.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,7 +96,9 @@ class Settings:
 
     @property
     def tmp_dir(self) -> Path:
-        return self.home / "tmp"
+        normalized_home = os.path.normcase(str(self.home.expanduser().resolve(strict=False)))
+        namespace = hashlib.sha256(os.fsencode(normalized_home)).hexdigest()[:16]
+        return Path(tempfile.gettempdir()).resolve(strict=False) / f"keyframe-{namespace}"
 
     @property
     def cache_dir(self) -> Path:
@@ -182,5 +186,5 @@ class Settings:
     def ensure_directories(self) -> None:
         """Create private runtime directories needed by acquisition and storage."""
 
-        for directory in (self.home, self.tmp_dir, self.cache_dir, self.artifacts_dir):
+        for directory in (self.home, self.cache_dir, self.artifacts_dir, self.tmp_dir):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)

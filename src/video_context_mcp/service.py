@@ -345,9 +345,9 @@ class KeyframeService:
                             )
                         except OSError as exc:
                             raise ExtractionError(
-                                "Could not stage visual artifacts. Check free disk space and "
-                                f"permissions under KEYFRAME_HOME ({self.settings.home}), then "
-                                "retry."
+                                "Could not process or stage visual artifacts. Check free disk "
+                                "space and permissions for the operating system temporary "
+                                f"directory and KEYFRAME_HOME ({self.settings.home}), then retry."
                             ) from exc
 
                     if needs_whisper:
@@ -739,6 +739,9 @@ class KeyframeService:
         probe_plan: VisualProbePlan | None,
         progress: ProgressCallback | None,
     ) -> tuple[list[VisualMoment], Path | None]:
+        # Decoded frames can be large and are needed only during this ingest. The
+        # platform-native temporary directory keeps that scratch data out of the
+        # persistent Keyframe cache (and out of a project-local KEYFRAME_HOME).
         with tempfile.TemporaryDirectory(prefix="ingest-", dir=self.settings.tmp_dir) as raw_temp:
             work_dir = Path(raw_temp)
 
@@ -776,56 +779,70 @@ class KeyframeService:
                 return [], None
 
             run_name = f"p{PIPELINE_VERSION}-{coverage.value}-{uuid.uuid4().hex[:12]}"
-            staged_run = work_dir / "publish"
-            staged_run.mkdir(parents=True)
             final_run = self.settings.artifacts_dir / video_id / run_name
             final_run.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            moments: list[VisualMoment] = []
-            for index, item in enumerate(extracted):
-                frame_name = f"frame-{index:05d}.jpg"
-                crop_name = f"crop-{index:05d}.jpg"
-                encoded_frame = encode_image(item.frame_path)
-                (staged_run / frame_name).write_bytes(encoded_frame.data)
-                cropped, _ = auto_crop_text_region(item.frame_path, item.ocr)
-                encoded_crop = encode_image(cropped)
-                (staged_run / crop_name).write_bytes(encoded_crop.data)
-                notes = [f"Visual classification confidence: {item.kind_confidence:.2f}."]
-                if coverage is VisualCoverage.PROBE:
-                    notes.append(
-                        "Sparse probe evidence is partial; verify exact claims against the source "
-                        "image and use mode='full' for gaps, sequences, or negative visual claims."
+            # Publication staging stays beside the durable destination so the
+            # final rename is atomic even when the OS temp directory is mounted on
+            # a different filesystem.
+            staged_run = Path(
+                tempfile.mkdtemp(prefix=f".staging-{run_name}-", dir=final_run.parent)
+            )
+            try:
+                moments: list[VisualMoment] = []
+                for index, item in enumerate(extracted):
+                    frame_name = f"frame-{index:05d}.jpg"
+                    crop_name = f"crop-{index:05d}.jpg"
+                    encoded_frame = encode_image(item.frame_path)
+                    (staged_run / frame_name).write_bytes(encoded_frame.data)
+                    cropped, _ = auto_crop_text_region(item.frame_path, item.ocr)
+                    encoded_crop = encode_image(cropped)
+                    (staged_run / crop_name).write_bytes(encoded_crop.data)
+                    notes = [f"Visual classification confidence: {item.kind_confidence:.2f}."]
+                    if coverage is VisualCoverage.PROBE:
+                        notes.append(
+                            "Sparse probe evidence is partial; verify exact claims against the "
+                            "source image and use mode='full' for gaps, sequences, or negative "
+                            "visual claims."
+                        )
+                    if item.ocr.confidence < 0.70:
+                        notes.append(
+                            "OCR confidence is below 0.70; treat the source frame as authoritative."
+                        )
+                    if item.language is not None and item.parses is False:
+                        notes.append(
+                            "Reconstructed code did not parse; verify it against the source frame."
+                        )
+                    moment_id = f"{video_id}:m:{run_name}:{index}"
+                    moments.append(
+                        VisualMoment(
+                            moment_id=moment_id,
+                            video_id=video_id,
+                            actual_t=item.timestamp_s,
+                            start_s=item.start_s,
+                            end_s=item.end_s,
+                            kind=MomentKind(item.kind),
+                            classification_confidence=item.kind_confidence,
+                            stable_seconds=item.stable_seconds,
+                            ocr_text=item.ocr.text,
+                            ocr_confidence=item.ocr.confidence,
+                            language_guess=item.language,
+                            code=item.ocr.text,
+                            parses=item.parses,
+                            notes=tuple(notes),
+                            frame_path=str(
+                                (final_run / frame_name).relative_to(self.settings.home)
+                            ),
+                            crop_path=str(
+                                (final_run / crop_name).relative_to(self.settings.home)
+                            ),
+                        )
                     )
-                if item.ocr.confidence < 0.70:
-                    notes.append(
-                        "OCR confidence is below 0.70; treat the source frame as authoritative."
-                    )
-                if item.language is not None and item.parses is False:
-                    notes.append(
-                        "Reconstructed code did not parse; verify it against the source frame."
-                    )
-                moment_id = f"{video_id}:m:{run_name}:{index}"
-                moments.append(
-                    VisualMoment(
-                        moment_id=moment_id,
-                        video_id=video_id,
-                        actual_t=item.timestamp_s,
-                        start_s=item.start_s,
-                        end_s=item.end_s,
-                        kind=MomentKind(item.kind),
-                        classification_confidence=item.kind_confidence,
-                        stable_seconds=item.stable_seconds,
-                        ocr_text=item.ocr.text,
-                        ocr_confidence=item.ocr.confidence,
-                        language_guess=item.language,
-                        code=item.ocr.text,
-                        parses=item.parses,
-                        notes=tuple(notes),
-                        frame_path=str((final_run / frame_name).relative_to(self.settings.home)),
-                        crop_path=str((final_run / crop_name).relative_to(self.settings.home)),
-                    )
-                )
-            os.replace(staged_run, final_run)
-            return moments, final_run
+                os.replace(staged_run, final_run)
+                return moments, final_run
+            finally:
+                # Normal publication moves the directory, making this a no-op.
+                # Encoding and rename failures remove the unpublished partial run.
+                shutil.rmtree(staged_run, ignore_errors=True)
 
     def _read_artifact(self, relative_path: str) -> tuple[bytes, str]:
         candidate = (self.settings.home / relative_path).resolve(strict=False)

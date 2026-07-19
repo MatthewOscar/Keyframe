@@ -10,6 +10,7 @@ import pytest
 from filelock import FileLock
 from PIL import Image
 
+import video_context_mcp.service as service_module
 from video_context_mcp.acquisition import (
     AcquiredSource,
     SourceKind,
@@ -206,6 +207,66 @@ def test_local_cache_identity_reuses_unchanged_source_and_hashes_changed_file(
     assert changed.video_id != first.video_id
     assert changed.cache_hit is False
     assert len(calls) == 2
+
+
+def test_visual_scratch_uses_os_temp_and_publication_stays_atomic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer()
+    os_temp = tmp_path / "os-temp"
+    os_temp.mkdir()
+    monkeypatch.setattr(service_module.tempfile, "tempdir", str(os_temp))
+
+    analysis_dirs: list[Path] = []
+    publication_moves: list[tuple[Path, Path]] = []
+    base_extractor = _fake_visual_extractor()
+    original_replace = service_module.os.replace
+
+    def extract(
+        media_path: Path,
+        work_dir: Path,
+        **kwargs: object,
+    ) -> list[ExtractedVisualMoment]:
+        analysis_dirs.append(work_dir)
+        return base_extractor(media_path, work_dir, **kwargs)
+
+    def record_replace(source_path: str | bytes | Path, destination_path: str | bytes | Path) -> None:
+        source_candidate = Path(source_path)
+        destination_candidate = Path(destination_path)
+        if destination_candidate.is_relative_to(settings.artifacts_dir):
+            publication_moves.append((source_candidate, destination_candidate))
+        original_replace(source_path, destination_path)
+
+    monkeypatch.setattr(service_module.os, "replace", record_replace)
+    service = KeyframeService(
+        settings=settings,
+        acquire=acquire,
+        extract_visuals=extract,
+        has_whisper=lambda: False,
+    )
+
+    result = service.ingest(
+        str(source),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+
+    assert len(analysis_dirs) == 1
+    assert analysis_dirs[0].is_relative_to(os_temp)
+    assert not analysis_dirs[0].is_relative_to(settings.home)
+    assert not analysis_dirs[0].parent.exists()
+    assert len(publication_moves) == 1
+    staged_run, final_run = publication_moves[0]
+    assert staged_run.parent == final_run.parent
+    assert staged_run.name.startswith(".staging-")
+    assert final_run.is_dir()
+    moments = service.store.moments_for_video(result.video_id)
+    assert moments
+    assert all((settings.home / moment.frame_path).is_file() for moment in moments)
+    assert not any(settings.tmp_dir.iterdir())
 
 
 def test_request_local_mcp_roots_authorize_without_mutating_service_settings(

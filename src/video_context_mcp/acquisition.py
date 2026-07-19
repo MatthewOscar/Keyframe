@@ -1575,6 +1575,8 @@ def acquire_remote(
     media_path: Path | None = None
     try:
         settings.ensure_directories()
+        # Downloads are disposable source material. Settings namespaces scratch
+        # beneath the native OS temp location instead of KEYFRAME_HOME.
         temp_dir = Path(tempfile.mkdtemp(prefix="acquire-", dir=settings.tmp_dir))
         needs_probe_audio = transcript_mode == "whisper" or (
             transcript_mode == "auto" and not transcript

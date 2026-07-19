@@ -51,7 +51,13 @@ def test_settings_use_platform_default(tmp_path: Path, monkeypatch: pytest.Monke
     assert settings.allowed_roots == ()
 
 
-def test_ensure_directories_creates_runtime_layout(tmp_path: Path) -> None:
+def test_ensure_directories_creates_runtime_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    os_temp = tmp_path / "os-temp"
+    os_temp.mkdir()
+    monkeypatch.setattr(config_module.tempfile, "tempdir", str(os_temp))
     settings = Settings(home=tmp_path / "home", allowed_roots=(tmp_path,))
 
     settings.ensure_directories()
@@ -60,6 +66,25 @@ def test_ensure_directories_creates_runtime_layout(tmp_path: Path) -> None:
     assert settings.tmp_dir.is_dir()
     assert settings.cache_dir.is_dir()
     assert settings.artifacts_dir.is_dir()
+    assert settings.tmp_dir.parent == os_temp.resolve()
+
+
+def test_temp_namespaces_are_isolated_by_keyframe_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    os_temp = tmp_path / "os-temp"
+    os_temp.mkdir()
+    monkeypatch.setattr(config_module.tempfile, "tempdir", str(os_temp))
+
+    first = Settings(home=tmp_path / "first-home", allowed_roots=())
+    same = Settings(home=tmp_path / "first-home", allowed_roots=())
+    second = Settings(home=tmp_path / "second-home", allowed_roots=())
+
+    assert first.tmp_dir == same.tmp_dir
+    assert first.tmp_dir != second.tmp_dir
+    assert first.tmp_dir.parent == os_temp.resolve()
+    assert second.tmp_dir.parent == os_temp.resolve()
 
 
 @pytest.mark.parametrize(

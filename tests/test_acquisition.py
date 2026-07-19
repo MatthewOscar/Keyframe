@@ -516,6 +516,9 @@ def test_remote_full_mode_downloads_then_cleanup_is_idempotent(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    os_temp = settings.home.parent / "os-temp"
+    os_temp.mkdir()
+    monkeypatch.setattr(acquisition.tempfile, "tempdir", str(os_temp))
     calls = _install_fake_ydl(monkeypatch, _remote_info())
 
     acquired = acquire_remote(
@@ -528,6 +531,8 @@ def test_remote_full_mode_downloads_then_cleanup_is_idempotent(
     media_path = acquired.media_path
     temp_dir = media_path.parent
     assert media_path.read_bytes() == b"downloaded video"
+    assert media_path.is_relative_to(os_temp)
+    assert not media_path.is_relative_to(settings.home)
     assert [download for _, download in calls] == [False, True]
     assert calls[1][0]["format"] == "bv*+ba/b"
 
@@ -535,6 +540,7 @@ def test_remote_full_mode_downloads_then_cleanup_is_idempotent(
     acquired.cleanup()
 
     assert not temp_dir.exists()
+    assert list(settings.tmp_dir.iterdir()) == []
     assert acquired.media_path is None
 
 

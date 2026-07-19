@@ -221,10 +221,13 @@ flowchart LR
     I --> J[Codex / ChatGPT / Claude Code / Cursor / Agy]
 ```
 
-Remote media is downloaded to a temporary workspace. A successful ingest
+Remote media and decoded analysis frames use a private, per-`KEYFRAME_HOME`
+namespace beneath the operating system's native temporary directory (`%TEMP%`
+on Windows and the platform temp location on macOS/Linux). A successful ingest
 atomically publishes derived transcript, OCR, metadata, and representative
-frames to the cache, then removes the downloaded source. Failed ingests do not
-publish partial records.
+frames to the cache, then removes the downloaded source and analysis workspace.
+Failed ingests do not publish partial records, and startup recovery removes
+interrupted scratch work left in that namespace.
 
 When captions are unavailable, Keyframe overlaps the isolated Whisper worker
 with either sparse-probe or full visual extraction, analyzes retained frames
@@ -237,6 +240,11 @@ on macOS.
 
 - Processing and indexing happen on the machine running the MCP server.
 - `KEYFRAME_HOME` overrides the platform-native Keyframe data directory.
+- SQLite, text indexes, and the retained evidence frames needed by later tool
+  calls persist under `KEYFRAME_HOME`; disposable downloads and intermediate
+  frames do not.
+- Caller-owned local videos are read in place and are never copied, moved, or
+  deleted by Keyframe.
 - Local reads are limited to per-request MCP workspace roots plus explicit
   `KEYFRAME_ALLOWED_ROOTS` entries. Process CWD is never an implicit grant.
 - Derived frames and text remain cached until the user removes that directory.
