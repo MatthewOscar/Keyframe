@@ -68,4 +68,6 @@ jobs:
       - name: Create immutable GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/* --generate-notes --verify-tag
+        run: >-
+          gh release create "${{ github.ref_name }}" dist/* --generate-notes --verify-tag
+          --repo "${{ github.repository }}"
