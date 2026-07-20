@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,90 @@ def test_settings_use_platform_default(tmp_path: Path, monkeypatch: pytest.Monke
 
     assert settings.home == default_home.resolve()
     assert settings.allowed_roots == ()
+    assert settings.allow_temp_uploads is False
+    assert settings.authorized_local_roots == ()
+
+
+def test_temp_upload_root_is_explicit_private_and_not_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    os_temp = tmp_path / "os-temp"
+    cwd = tmp_path / "untrusted-cwd"
+    os_temp.mkdir()
+    cwd.mkdir()
+    monkeypatch.setattr(config_module.tempfile, "tempdir", str(os_temp))
+
+    settings = Settings.from_env({"KEYFRAME_ALLOW_TEMP_UPLOADS": "true"}, cwd=cwd)
+    settings.ensure_directories()
+
+    assert settings.allow_temp_uploads is True
+    assert settings.allowed_roots == ()
+    assert settings.authorized_local_roots == (settings.upload_dir,)
+    assert settings.upload_dir == settings.tmp_dir / "uploads"
+    assert settings.upload_dir.is_dir()
+    assert cwd.resolve() not in settings.authorized_local_roots
+    if os.name == "posix":
+        assert stat.S_IMODE(settings.tmp_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(settings.upload_dir.stat().st_mode) == 0o700
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode hardening is platform-specific")
+def test_temp_upload_root_tightens_preexisting_permissions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    os_temp = tmp_path / "os-temp"
+    os_temp.mkdir()
+    monkeypatch.setattr(config_module.tempfile, "tempdir", str(os_temp))
+    settings = Settings(
+        home=tmp_path / "home",
+        allowed_roots=(),
+        allow_temp_uploads=True,
+    )
+    settings.tmp_dir.mkdir(mode=0o777)
+    settings.upload_dir.mkdir(mode=0o777)
+    settings.tmp_dir.chmod(0o777)
+    settings.upload_dir.chmod(0o777)
+
+    settings.ensure_directories()
+
+    assert stat.S_IMODE(settings.tmp_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(settings.upload_dir.stat().st_mode) == 0o700
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows symlink creation requires extra privileges")
+def test_temp_namespace_rejects_symbolic_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    os_temp = tmp_path / "os-temp"
+    target = tmp_path / "attacker-controlled"
+    os_temp.mkdir()
+    target.mkdir()
+    monkeypatch.setattr(config_module.tempfile, "tempdir", str(os_temp))
+    settings = Settings(home=tmp_path / "home", allowed_roots=())
+    settings.tmp_dir.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ConfigurationError, match="symbolic link or junction"):
+        settings.ensure_directories()
+
+
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="ownership IDs are unavailable")
+def test_temp_namespace_rejects_foreign_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    os_temp = tmp_path / "os-temp"
+    os_temp.mkdir()
+    monkeypatch.setattr(config_module.tempfile, "tempdir", str(os_temp))
+    settings = Settings(home=tmp_path / "home", allowed_roots=())
+    settings.tmp_dir.mkdir()
+    actual_uid = settings.tmp_dir.lstat().st_uid
+    monkeypatch.setattr(config_module.os, "getuid", lambda: actual_uid + 1)
+
+    with pytest.raises(ConfigurationError, match="not owned by the current user"):
+        settings.ensure_directories()
 
 
 def test_ensure_directories_creates_runtime_layout(
@@ -94,6 +179,7 @@ def test_temp_namespaces_are_isolated_by_keyframe_home(
         ("KEYFRAME_MAX_DURATION_S", "14401"),
         ("KEYFRAME_MAX_LOCAL_FILE_BYTES", "many"),
         ("KEYFRAME_ALLOW_PRIVATE_URLS", "sometimes"),
+        ("KEYFRAME_ALLOW_TEMP_UPLOADS", "sometimes"),
         ("KEYFRAME_FFPROBE", "   "),
     ],
 )

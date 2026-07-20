@@ -1,7 +1,7 @@
 # Keyframe
 
-**Local video RAG for coding agents.** Keyframe turns a tutorial or screen
-recording into timestamped transcript segments, searchable on-screen text,
+**Local video and animated-GIF RAG for coding agents.** Keyframe turns a tutorial,
+screen recording, or animation into timestamped transcript segments, searchable on-screen text,
 representative frames, and reconstructed code. Ask what was *said*, what was
 *shown*, or both—and inspect the source frame before trusting uncertain OCR.
 It runs locally in Codex, ChatGPT desktop, Claude Code, Cursor, and Google
@@ -25,7 +25,7 @@ GPT-5.6 reasons over Keyframe's evidence, changes code, and runs the tests.
 
 ### Prerequisites
 
-Keyframe v0.1.0 requires Python 3.12 and uses [`uv`](https://docs.astral.sh/uv/). Install
+Keyframe v0.1.1 requires Python 3.12 and uses [`uv`](https://docs.astral.sh/uv/). Install
 these native tools before starting:
 
 - FFmpeg and `ffprobe` for media inspection and frame extraction
@@ -47,10 +47,10 @@ uv sync --frozen --group dev
 uv run video-context-mcp doctor
 ```
 
-After version 0.1.0 is published, the equivalent isolated PyPI command is:
+After version 0.1.1 is published, the equivalent isolated PyPI command is:
 
 ```bash
-uvx --python 3.12 --from "video-context-mcp==0.1.0" video-context-mcp doctor
+uvx --python 3.12 --from "video-context-mcp==0.1.1" video-context-mcp doctor
 ```
 
 If PyPI is not yet available after the release is tagged, use the immutable
@@ -58,7 +58,7 @@ GitHub release tag:
 
 ```bash
 uvx --python 3.12 --from \
-  "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.0" \
+  "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.1" \
   video-context-mcp doctor
 ```
 
@@ -66,7 +66,7 @@ After the PyPI release, add `[whisper]` to the package spec only when local
 speech-to-text is needed:
 
 ```bash
-uvx --python 3.12 --from "video-context-mcp[whisper]==0.1.0" video-context-mcp doctor
+uvx --python 3.12 --from "video-context-mcp[whisper]==0.1.1" video-context-mcp doctor
 ```
 
 ### Connect a client
@@ -94,7 +94,7 @@ Add the following to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.keyframe]
 command = "uvx"
-args = ["--python", "3.12", "--from", "video-context-mcp==0.1.0", "video-context-mcp", "serve", "--transport", "stdio"]
+args = ["--python", "3.12", "--from", "video-context-mcp==0.1.1", "video-context-mcp", "serve", "--transport", "stdio"]
 startup_timeout_sec = 180
 tool_timeout_sec = 1900
 env = { KEYFRAME_ALLOWED_ROOTS = "/Users/you/Videos" }
@@ -103,7 +103,9 @@ env = { KEYFRAME_ALLOWED_ROOTS = "/Users/you/Videos" }
 For local files, Keyframe uses workspace roots advertised by the MCP client.
 It never treats the launcher working directory as authorization. If a client
 does not advertise roots, add an `env` entry with `KEYFRAME_ALLOWED_ROOTS`;
-separate multiple roots with the operating system's path separator.
+separate multiple roots with the operating system's path separator. The
+installable plugin instead enables one OS-temp upload root. Its skill creates a
+unique child there, stages only the selected attachment, and retries once.
 
 Restart Codex, then ask: “Index this tutorial and find where error handling is
 shown. Cite the timestamps.”
@@ -111,11 +113,12 @@ shown. Cite the timestamps.”
 ### Install the Keyframe plugin in Codex and ChatGPT desktop
 
 The plugin bundles the same MCP server with the `keyframe-video-rag` workflow
-skill. Its launcher installs the exact `v0.1.0` Git tag, so judges do not need
+skill. Its launcher installs the exact `v0.1.1` Git tag with local Whisper, so
+judges do not need
 the PyPI publication to use it:
 
 ```bash
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.0
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.1
 codex plugin add keyframe@keyframe
 ```
 
@@ -125,12 +128,12 @@ For local marketplace validation, add the repository root instead:
 codex plugin marketplace add .
 ```
 
-Before `v0.1.0` is tagged, use the direct project/server configuration for live
+Before `v0.1.1` is tagged, use the direct project/server configuration for live
 testing; the installable plugin intentionally resolves that immutable tag.
 
 Then restart the ChatGPT desktop app, open the Plugins Directory, select the
 **Keyframe** marketplace source, and install **Keyframe**. Start a new chat so
-the skill and tools are loaded. Keyframe v0.1.0 targets this local desktop flow;
+the skill and tools are loaded. Keyframe v0.1.1 targets this local desktop flow;
 it does not host a ChatGPT web app.
 
 Claude Code and Cursor can install the same repository as a marketplace, while
@@ -187,7 +190,7 @@ targeted fact.
 
 | Tool | Purpose |
 | --- | --- |
-| `video_ingest` | Index one local or public video using a sparse fast visual probe or full 1 FPS analysis, with captions, optional Whisper, or no transcript. |
+| `video_ingest` | Index one local/public video or local animated GIF using a sparse fast probe or bounded full analysis, with captions, local Whisper for audio, or no transcript. |
 | `video_get_transcript` | Page through timestamped transcript segments, optionally within a time range. |
 | `video_search` | Rank matching `said`, `shown`, or combined evidence across one video or the local library. |
 | `video_list_moments` | Page through retained moments filtered by code, terminal, slide, diagram, other, or any. |
@@ -205,11 +208,11 @@ pagination, visual-result behavior, and expected errors.
 
 ```mermaid
 flowchart LR
-    A[Local file / public URL] --> B[FFmpeg + yt-dlp]
+    A[Local video / animated GIF / public URL] --> B[FFmpeg + yt-dlp]
     B --> C[Captions]
     B --> W[Isolated optional Whisper worker]
     B --> P[Fast: bounded visual probe]
-    B --> D[Full: 1 FPS frame sampling]
+    B --> D[Full: bounded temporal sampling]
     D --> E[Adjacent-frame grouping]
     P --> F[Bounded parallel OCR + classification]
     E --> F[Bounded parallel OCR + classification]
@@ -246,7 +249,12 @@ on macOS.
 - Caller-owned local videos are read in place and are never copied, moved, or
   deleted by Keyframe.
 - Local reads are limited to per-request MCP workspace roots plus explicit
-  `KEYFRAME_ALLOWED_ROOTS` entries. Process CWD is never an implicit grant.
+  `KEYFRAME_ALLOWED_ROOTS` entries. Installed plugins can opt into a single
+  hardened staging root under the OS temp directory for selected attachments;
+  each upload uses a unique child that the agent removes afterward. Process CWD
+  and the rest of the temp directory are never implicit grants. On Windows,
+  staging privacy relies on the inherited ACL of the user's temp directory
+  because POSIX ownership and mode bits are unavailable.
 - Derived frames and text remain cached until the user removes that directory.
 - Extracted transcript/OCR is untrusted source material, never agent
   instructions.
@@ -259,15 +267,18 @@ on macOS.
 
 ## Current limits
 
-- v0.1.0 accepts individual public videos, not playlists or livestreams.
+- v0.1.1 accepts individual public videos and local animated GIFs, not playlists
+  or livestreams. Static GIFs should be attached as images; remote GIF URLs are
+  not yet an advertised compatibility surface.
 - Private, members-only, age-restricted, DRM, cookie, and login flows are out of
   scope.
 - The default duration guard is 30 minutes; callers must explicitly raise it
   for longer inputs.
 - Fast coverage is intentionally sparse; a missing probe hit is not proof that
-  content was absent. Full sampling at 1 FPS can still miss very brief visual
-  changes. Retained timestamps use decoded presentation times rather than an
-  inferred frame index.
+  content was absent. Full videos sample at 1 FPS; animated GIFs use denser,
+  bounded one-loop sampling. Either can miss a very brief visual change.
+  Retained timestamps use decoded presentation times rather than an inferred
+  frame index.
 - Native media/OCR operations have bounded timeouts and fail actionably on
   malformed or unusually slow inputs.
 - OCR can confuse glyphs and infer indentation incorrectly. Python, JSON, and
@@ -277,9 +288,10 @@ on macOS.
 - Remote formats must be downloadable through Keyframe's validated in-process
   HTTP, native HLS, or DASH transport. Formats that require FFmpeg, RTMP, or
   another external process to make network connections are rejected.
-- Whisper is optional and can be resource intensive on CPU-only machines. Its
-  first use may also download the configured model before ingestion begins.
-- Windows support is preview-level in v0.1.0.
+- Whisper is optional in the base Python package and bundled by the installable
+  plugin. It can be resource intensive on CPU-only machines, and first use may
+  download the configured model before ingestion begins.
+- Windows support is preview-level in v0.1.1.
 - The bundled registrations target local CLI and desktop sessions. Hosted
   agents cannot launch this STDIO process on the user's machine.
 
@@ -290,6 +302,9 @@ tested repository change. Keyframe supplies deterministic evidence; GPT-5.6
 selects relevant moments, compares OCR with source frames, applies the change,
 and explains it with timestamp citations. The ten reproducible prompts in
 [`evals/cases.json`](evals/cases.json) exercise that division of labor.
+Supplementary Mac-plugin regressions for local attachment staging, honest
+provenance, warm-cache latency, and animated GIFs are in
+[`evals/mac-plugin-cases.json`](evals/mac-plugin-cases.json).
 
 Make the judged model choice explicit before recording. Either launch Codex
 with `codex --model gpt-5.6` or set this in `~/.codex/config.toml`:

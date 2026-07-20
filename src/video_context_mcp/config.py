@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -73,6 +74,39 @@ def _resolve_root(path: Path, *, setting: str) -> Path:
     return resolved
 
 
+def _ensure_private_temp_directory(path: Path, *, label: str) -> None:
+    """Create and validate one Keyframe-owned directory below the OS temp root."""
+
+    try:
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        is_junction = getattr(path, "is_junction", None)
+        if path.is_symlink() or (callable(is_junction) and is_junction()):
+            raise ConfigurationError(f"{label} must not be a symbolic link or junction: {path}")
+        metadata = path.lstat()
+    except ConfigurationError:
+        raise
+    except OSError as exc:
+        raise ConfigurationError(f"Could not create or inspect {label}: {path}") from exc
+
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise ConfigurationError(f"{label} must be a directory: {path}")
+
+    getuid = getattr(os, "getuid", None)
+    if callable(getuid) and metadata.st_uid != getuid():
+        raise ConfigurationError(
+            f"{label} is not owned by the current user and cannot be trusted: {path}"
+        )
+
+    if os.name == "posix":
+        try:
+            path.chmod(0o700)
+            hardened = path.lstat()
+        except OSError as exc:
+            raise ConfigurationError(f"Could not secure {label}: {path}") from exc
+        if stat.S_IMODE(hardened.st_mode) != 0o700:
+            raise ConfigurationError(f"{label} permissions could not be restricted: {path}")
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     """Resolved Keyframe runtime settings.
@@ -93,6 +127,7 @@ class Settings:
     max_remote_file_bytes: int = DEFAULT_MAX_REMOTE_FILE_BYTES
     max_subtitle_bytes: int = DEFAULT_MAX_SUBTITLE_BYTES
     allow_private_urls: bool = False
+    allow_temp_uploads: bool = False
 
     @property
     def tmp_dir(self) -> Path:
@@ -103,6 +138,20 @@ class Settings:
     @property
     def cache_dir(self) -> Path:
         return self.home / "cache"
+
+    @property
+    def upload_dir(self) -> Path:
+        """Private cross-client staging directory for explicitly selected uploads."""
+
+        return self.tmp_dir / "uploads"
+
+    @property
+    def authorized_local_roots(self) -> tuple[Path, ...]:
+        """Return explicit roots plus the opt-in, Keyframe-owned upload staging root."""
+
+        if not self.allow_temp_uploads or self.upload_dir in self.allowed_roots:
+            return self.allowed_roots
+        return (*self.allowed_roots, self.upload_dir)
 
     @property
     def artifacts_dir(self) -> Path:
@@ -119,9 +168,10 @@ class Settings:
 
         Supported variables are ``KEYFRAME_HOME``, ``KEYFRAME_ALLOWED_ROOTS``
         (``os.pathsep`` separated), executable overrides, duration and byte caps,
-        and ``KEYFRAME_ALLOW_PRIVATE_URLS``. Local files are authorized only by
-        explicit configured roots or per-request roots advertised by an MCP client;
-        process CWD is never trusted implicitly.
+        ``KEYFRAME_ALLOW_PRIVATE_URLS``, and ``KEYFRAME_ALLOW_TEMP_UPLOADS``. Local
+        files are authorized only by explicit configured roots, per-request roots
+        advertised by an MCP client, or the private upload staging directory when
+        explicitly enabled; process CWD is never trusted implicitly.
         """
 
         values = os.environ if env is None else env
@@ -180,11 +230,18 @@ class Settings:
                 DEFAULT_MAX_SUBTITLE_BYTES,
             ),
             allow_private_urls=_boolean(values, "KEYFRAME_ALLOW_PRIVATE_URLS"),
+            allow_temp_uploads=_boolean(values, "KEYFRAME_ALLOW_TEMP_UPLOADS"),
             **executables,
         )
 
     def ensure_directories(self) -> None:
         """Create private runtime directories needed by acquisition and storage."""
 
-        for directory in (self.home, self.cache_dir, self.artifacts_dir, self.tmp_dir):
+        for directory in (self.home, self.cache_dir, self.artifacts_dir):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _ensure_private_temp_directory(self.tmp_dir, label="Keyframe temp namespace")
+        if self.allow_temp_uploads:
+            _ensure_private_temp_directory(
+                self.upload_dir,
+                label="Keyframe upload staging root",
+            )

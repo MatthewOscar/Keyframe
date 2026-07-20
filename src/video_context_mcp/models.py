@@ -93,6 +93,7 @@ class VideoRecord(StrictModel):
     duration_s: Annotated[float, Field(ge=0)]
     chapters: tuple[Chapter, ...] = ()
     has_transcript: bool
+    has_audio: bool = True
     transcript_mode: TranscriptMode = TranscriptMode.AUTO
     indexed_mode: IngestMode
     visual_coverage: VisualCoverage
@@ -113,6 +114,7 @@ class IngestResult(StrictModel):
     availability: Literal["local", "public", "unlisted"] = "public"
     chapters: tuple[Chapter, ...] = ()
     has_transcript: bool
+    has_audio: bool = True
     transcript_mode: TranscriptMode = TranscriptMode.AUTO
     keyframe_count: int
     indexed_mode: IngestMode

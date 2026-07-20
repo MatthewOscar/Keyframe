@@ -1,0 +1,51 @@
+{
+  "schema_version": "1",
+  "suite": "keyframe-mac-plugin-v0.1.1",
+  "description": "Supplementary regressions for attachment staging, honest Keyframe provenance, warm-cache latency, and animated GIFs.",
+  "measurement": {
+    "record_separately": [
+      "agent_total_wall_time_s",
+      "keyframe_tool_wall_time_s",
+      "video_ingest_wall_time_s",
+      "tool_call_counts"
+    ],
+    "provenance_rule": "Fail any answer attributed to Keyframe unless video_ingest returned status=ready and a video_id."
+  },
+  "variables": {
+    "LOCAL_VIDEO": "A selected local recording with audio and no caption sidecar",
+    "ANIMATED_GIF": "A first-party animated GIF with at least three visibly distinct states"
+  },
+  "cases": [
+    {
+      "id": "desktop-local-attachment",
+      "prompt": "Use Keyframe to summarize {{LOCAL_VIDEO}} with a timestamped timeline. If the selected file is outside authorized roots, stage only that attachment at the exact path Keyframe reports and retry once. Do not use native video analysis as a silent fallback.",
+      "success_criteria": [
+        "A successful ingest receipt has status=ready and a video_id",
+        "Audio-bearing media returns has_transcript=true through captions or local Whisper",
+        "At most one successful fast ingest and one full upgrade",
+        "At most one 12-moment list and four frame retrievals",
+        "Any native fallback requires explicit user consent and is labeled"
+      ]
+    },
+    {
+      "id": "desktop-warm-cache",
+      "prompt": "Repeat the completed Keyframe ingest for {{LOCAL_VIDEO}} without refresh, then answer one cached search question using the existing video ID.",
+      "success_criteria": [
+        "The same video_id is returned",
+        "cache_hit=true",
+        "The ingest tool completes in under one second",
+        "No duplicate full upgrade or native media analysis occurs"
+      ]
+    },
+    {
+      "id": "desktop-animated-gif",
+      "prompt": "Use Keyframe to explain the state sequence in {{ANIMATED_GIF}}. Verify the middle state with one source frame.",
+      "success_criteria": [
+        "Ingest returns status=ready, has_audio=false, and visual_coverage=probe or full",
+        "Whisper is not invoked",
+        "A full upgrade is used only if the sparse probe cannot settle the sequence",
+        "The answer cites actual timestamps and inspects no more than four frames"
+      ]
+    }
+  ]
+}

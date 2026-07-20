@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-v0.1.0",
+  "suite": "keyframe-v0.1.1",
   "description": "Ten reproducible prompts for a prepared first-party tutorial fixture and demo target.",
   "variables": {
     "VIDEO_SOURCE": "Path or public URL supplied by the evaluator",
@@ -13,7 +13,7 @@
       "name": "Fast ingest establishes bounded evidence",
       "prompt": "Use Keyframe to ingest {{VIDEO_SOURCE}} in fast mode, then inspect at most 12 retained moment summaries without loading images. Report identity, transcript availability, cache status, warnings, and returned visual coverage.",
       "expected_tools": ["video_ingest", "video_list_moments"],
-      "success_criteria": ["Returns one stable video ID", "Branches on returned visual_coverage and has_transcript", "Treats probe coverage as partial", "Loads no images"]
+      "success_criteria": ["Returns status=ready and one stable video ID before attributing evidence to Keyframe", "Branches on returned visual_coverage, has_audio, and has_transcript", "Treats probe coverage as partial", "Loads no images", "Does not silently fall back to native media analysis"]
     },
     {
       "id": "search-said",
@@ -69,7 +69,7 @@
       "name": "Reuse a completed ingest",
       "prompt": "Ingest {{VIDEO_SOURCE}} again with the completed mode and no refresh. Confirm whether Keyframe reused the same identity and cache; do not time a network download as cached work.",
       "expected_tools": ["video_ingest"],
-      "success_criteria": ["Returns the same video ID", "Reports a cache hit", "Completes within the cached-response acceptance target"]
+      "success_criteria": ["Returns the same video ID", "Reports a cache hit", "The ingest tool completes in under one second", "Reports agent total time separately from Keyframe tool time when timing the eval"]
     },
     {
       "id": "headline-tested-change",

@@ -5,7 +5,7 @@ OpenAI Build Week submission. It is not a generated session transcript.
 
 ## Human-owned decisions
 
-Matthew Oscar selected and approved these decisions:
+Matthew Wyatt selected and approved these decisions:
 
 - Build **Keyframe**, a local video-RAG developer tool, in
   `MatthewOscar/Keyframe`.

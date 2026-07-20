@@ -33,6 +33,8 @@ from PIL import Image, ImageOps
 
 from video_context_mcp.constants import (
     FRAME_SAMPLE_FPS,
+    GIF_PROBE_MAX_SAMPLES,
+    GIF_PROBE_SAMPLE_FPS,
     MAX_ANALYSIS_FRAME_EDGE,
     MAX_IMAGE_BYTES,
     MAX_IMAGE_EDGE,
@@ -326,6 +328,7 @@ def sample_frames(
         "-nostats",
         "-nostdin",
         "-copyts",
+        *(["-ignore_loop", "1"] if video_path.suffix.lower() == ".gif" else []),
         "-i",
         str(video_path),
         "-vf",
@@ -503,6 +506,7 @@ def sample_frames_at_timestamps(
             "-ss",
             f"{requested_t:.6f}",
             "-copyts",
+            *(["-ignore_loop", "1"] if video_path.suffix.lower() == ".gif" else []),
             "-i",
             str(video_path),
             "-map",
@@ -1251,6 +1255,23 @@ def _select_visual_probe_frames(
     return sorted(selected, key=lambda frame: frame.timestamp_s)
 
 
+def _nearest_unique_frames(
+    frames: Sequence[SampledFrame],
+    timestamps_s: Sequence[float],
+) -> list[SampledFrame]:
+    if not frames:
+        return []
+    selected: list[SampledFrame] = []
+    for timestamp_s in timestamps_s:
+        nearest = min(
+            frames,
+            key=lambda frame: (abs(frame.timestamp_s - timestamp_s), frame.timestamp_s),
+        )
+        if nearest not in selected:
+            selected.append(nearest)
+    return selected
+
+
 def extract_visual_probe(
     video_path: Path,
     work_dir: Path,
@@ -1269,29 +1290,47 @@ def extract_visual_probe(
 ) -> list[VisualMoment]:
     """Extract a bounded visual scout without scanning the full timeline."""
 
-    del ffprobe_binary  # Exact seek targets come from validated acquisition metadata.
     if not isinstance(max_moments, int) or isinstance(max_moments, bool) or max_moments < 1:
         raise ValueError("max_moments must be a positive integer")
     if not isinstance(ocr_workers, int) or isinstance(ocr_workers, bool) or ocr_workers < 1:
         raise ValueError("ocr_workers must be a positive integer")
     if progress is not None:
         progress("Sampling sparse visual probe", 0.0)
-    chapter_frames = sample_frames_at_timestamps(
-        video_path,
-        work_dir / "chapters",
-        chapter_timestamps_s,
-        max_edge=max_edge,
-        ffmpeg_binary=ffmpeg_binary,
-        workers=ocr_workers,
-    )
-    uniform_frames = sample_frames_at_timestamps(
-        video_path,
-        work_dir / "uniform",
-        uniform_timestamps_s,
-        max_edge=max_edge,
-        ffmpeg_binary=ffmpeg_binary,
-        workers=ocr_workers,
-    )
+    if video_path.suffix.lower() == ".gif":
+        duration_s = _probe_video_duration(video_path, ffprobe_binary)
+        sample_fps = min(GIF_PROBE_SAMPLE_FPS, GIF_PROBE_MAX_SAMPLES / duration_s)
+        decoded_frames = sample_frames(
+            video_path,
+            work_dir / "gif",
+            fps=sample_fps,
+            ffmpeg_binary=ffmpeg_binary,
+            ffprobe_binary=ffprobe_binary,
+            max_edge=max_edge,
+        )
+        chapter_frames = _nearest_unique_frames(decoded_frames, chapter_timestamps_s)
+        chapter_paths = {frame.path for frame in chapter_frames}
+        uniform_frames = [
+            frame
+            for frame in _nearest_unique_frames(decoded_frames, uniform_timestamps_s)
+            if frame.path not in chapter_paths
+        ]
+    else:
+        chapter_frames = sample_frames_at_timestamps(
+            video_path,
+            work_dir / "chapters",
+            chapter_timestamps_s,
+            max_edge=max_edge,
+            ffmpeg_binary=ffmpeg_binary,
+            workers=ocr_workers,
+        )
+        uniform_frames = sample_frames_at_timestamps(
+            video_path,
+            work_dir / "uniform",
+            uniform_timestamps_s,
+            max_edge=max_edge,
+            ffmpeg_binary=ffmpeg_binary,
+            workers=ocr_workers,
+        )
     selected = _select_visual_probe_frames(
         chapter_frames,
         uniform_frames,
@@ -1335,12 +1374,19 @@ def extract_visual_moments(
     tesseract_config: str = "--psm 6",
     tesseract_binary: str = "tesseract",
     ocr_workers: int = _DEFAULT_OCR_WORKERS,
+    max_moments: int | None = None,
     progress: ProgressCallback | None = None,
 ) -> list[VisualMoment]:
     """Sample, stabilize, OCR, and classify a video into visual moments."""
 
     if not isinstance(ocr_workers, int) or isinstance(ocr_workers, bool) or ocr_workers < 1:
         raise ValueError("ocr_workers must be a positive integer")
+    if max_moments is not None and (
+        not isinstance(max_moments, int)
+        or isinstance(max_moments, bool)
+        or max_moments < 1
+    ):
+        raise ValueError("max_moments must be a positive integer or None")
 
     if progress is not None:
         progress("Sampling video frames", 0.0)
@@ -1357,6 +1403,11 @@ def extract_visual_moments(
         distance_threshold=distance_threshold,
         min_stable_seconds=min_stable_seconds,
     )
+    if max_moments is not None and len(runs) > max_moments:
+        runs = [
+            runs[index]
+            for index in _evenly_spaced_indexes(len(runs), max_moments)
+        ]
     moments = _analyze_runs(
         runs,
         node_binary=node_binary,

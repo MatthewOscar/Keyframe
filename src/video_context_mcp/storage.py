@@ -21,7 +21,7 @@ from video_context_mcp.models import (
     VisualMoment,
 )
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
 
 
@@ -57,6 +57,7 @@ class KeyframeStore:
                     duration_s REAL NOT NULL CHECK(duration_s >= 0),
                     chapters_json TEXT NOT NULL,
                     has_transcript INTEGER NOT NULL,
+                    has_audio INTEGER NOT NULL DEFAULT 1,
                     transcript_mode TEXT NOT NULL,
                     indexed_mode TEXT NOT NULL,
                     visual_coverage TEXT NOT NULL,
@@ -142,6 +143,9 @@ class KeyframeStore:
                 if current_version == 3:
                     self._migrate_v3_to_v4(connection)
                     current_version = 4
+                if current_version == 4:
+                    self._migrate_v4_to_v5(connection)
+                    current_version = 5
                 if current_version != SCHEMA_VERSION:
                     raise CacheError(
                         f"Unsupported Keyframe cache schema {version['value']}; expected "
@@ -164,7 +168,23 @@ class KeyframeStore:
             )
         connection.execute(
             "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
-            (str(SCHEMA_VERSION),),
+            ("4",),
+        )
+
+    @staticmethod
+    def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
+        """Persist whether speech transcription is possible for the source."""
+
+        video_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(videos)").fetchall()
+        }
+        if "has_audio" not in video_columns:
+            connection.execute(
+                "ALTER TABLE videos ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 1"
+            )
+        connection.execute(
+            "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
+            ("5",),
         )
 
     @staticmethod
@@ -341,11 +361,12 @@ class KeyframeStore:
                 """
                 INSERT INTO videos(
                     video_id, source, source_kind, availability, source_fingerprint, title, duration_s,
-                    chapters_json, has_transcript, transcript_mode, indexed_mode, visual_coverage,
+                    chapters_json, has_transcript, has_audio, transcript_mode, indexed_mode,
+                    visual_coverage,
                     keyframe_count, status,
                     warnings_json, local_source_path, local_source_size,
                     local_source_mtime_ns, pipeline_version
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(video_id) DO UPDATE SET
                     source=excluded.source,
                     source_kind=excluded.source_kind,
@@ -355,6 +376,7 @@ class KeyframeStore:
                     duration_s=excluded.duration_s,
                     chapters_json=excluded.chapters_json,
                     has_transcript=excluded.has_transcript,
+                    has_audio=excluded.has_audio,
                     transcript_mode=excluded.transcript_mode,
                     indexed_mode=excluded.indexed_mode,
                     visual_coverage=excluded.visual_coverage,
@@ -377,6 +399,7 @@ class KeyframeStore:
                     video.duration_s,
                     json.dumps([chapter.model_dump(mode="json") for chapter in video.chapters]),
                     int(video.has_transcript),
+                    int(video.has_audio),
                     video.transcript_mode.value,
                     video.indexed_mode.value,
                     video.visual_coverage.value,
@@ -510,17 +533,30 @@ class KeyframeStore:
         offset: int,
         limit: int,
     ) -> tuple[list[SearchHit], bool]:
-        match_query = _fts_query(query)
-        clauses = ["search_fts MATCH ?"]
-        values: list[object] = [match_query]
+        strict_query, broad_query = _fts_queries(query)
+        filters: list[str] = []
+        filter_values: list[object] = []
         if video_id is not None:
-            clauses.append("content.video_id = ?")
-            values.append(video_id)
+            filters.append("content.video_id = ?")
+            filter_values.append(video_id)
         if channel is not SearchChannel.ALL:
-            clauses.append("content.channel = ?")
-            values.append(channel.value)
-        values.extend([limit + 1, offset])
+            filters.append("content.channel = ?")
+            filter_values.append(channel.value)
         with self.connect() as connection:
+            match_query = strict_query
+            if broad_query != strict_query:
+                existence = connection.execute(
+                    f"""SELECT 1
+                    FROM search_fts
+                    JOIN search_content AS content ON content.id = search_fts.rowid
+                    WHERE {" AND ".join(["search_fts MATCH ?", *filters])}
+                    LIMIT 1""",
+                    [strict_query, *filter_values],
+                ).fetchone()
+                if existence is None:
+                    match_query = broad_query
+            clauses = ["search_fts MATCH ?", *filters]
+            values = [match_query, *filter_values, limit + 1, offset]
             rows = connection.execute(
                 f"""
                 SELECT content.*, bm25(search_fts) AS rank,
@@ -648,6 +684,7 @@ class KeyframeStore:
                 Chapter.model_validate(item) for item in json.loads(row["chapters_json"])
             ),
             has_transcript=bool(row["has_transcript"]),
+            has_audio=bool(row["has_audio"]),
             transcript_mode=TranscriptMode(row["transcript_mode"]),
             indexed_mode=IngestMode(row["indexed_mode"]),
             visual_coverage=VisualCoverage(row["visual_coverage"]),
@@ -693,8 +730,9 @@ class KeyframeStore:
         )
 
 
-def _fts_query(query: str) -> str:
+def _fts_queries(query: str) -> tuple[str, str]:
     tokens = _TOKEN_RE.findall(query.strip())
     if not tokens:
         raise CacheError("Search query must contain at least one letter or number.")
-    return " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens[:32])
+    quoted = [f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens[:32]]
+    return " AND ".join(quoted), " OR ".join(quoted)

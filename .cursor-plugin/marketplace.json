@@ -1,17 +1,17 @@
 {
   "name": "keyframe",
   "owner": {
-    "name": "Matthew Oscar"
+    "name": "Matthew Wyatt"
   },
   "metadata": {
-    "description": "Keyframe local video retrieval tools and timestamp-aware agent workflow.",
+    "description": "Keyframe local video and animated-GIF retrieval tools with a timestamp-aware agent workflow.",
     "pluginRoot": "plugins"
   },
   "plugins": [
     {
       "name": "keyframe",
       "source": "keyframe",
-      "description": "Search what tutorials say and show, then verify source frames before using OCR."
+      "description": "Search what videos say and show, inspect animated GIF states, and verify source frames before using OCR."
     }
   ]
 }

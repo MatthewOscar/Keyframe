@@ -20,7 +20,12 @@ from video_context_mcp.acquisition import (
     TranscriptSegment as AcquiredTranscriptSegment,
 )
 from video_context_mcp.config import Settings
-from video_context_mcp.constants import MAX_IMAGE_BYTES, MAX_IMAGE_EDGE, PIPELINE_VERSION
+from video_context_mcp.constants import (
+    GIF_FULL_MAX_SAMPLES,
+    MAX_IMAGE_BYTES,
+    MAX_IMAGE_EDGE,
+    PIPELINE_VERSION,
+)
 from video_context_mcp.cursors import CursorError
 from video_context_mcp.errors import CacheError, ExtractionError, SourceError
 from video_context_mcp.models import (
@@ -56,6 +61,8 @@ def _source_file(source_root: Path, contents: bytes = b"first video revision") -
 def _fake_acquirer(
     *,
     transcript_texts: tuple[str, ...] = ("alpha evidence", "beta evidence", "gamma evidence"),
+    has_audio: bool = True,
+    duration_s: float = 10.0,
 ) -> tuple[Callable[..., AcquiredSource], list[str]]:
     calls: list[str] = []
 
@@ -80,9 +87,10 @@ def _fake_acquirer(
                 kind=SourceKind.LOCAL,
                 video_id=f"local-{digest[:16]}",
                 title="Fake local video",
-                duration_s=10.0,
+                duration_s=duration_s,
                 provider="local",
                 file_size_bytes=len(contents),
+                has_audio=has_audio,
                 content_sha256=digest,
                 content_mtime_ns=stat.st_mtime_ns,
             ),
@@ -864,6 +872,133 @@ def test_full_whisper_ingest_overlaps_transcription_and_visual_extraction(
     assert result.keyframe_count == 2
     assert [value for value, _message in progress] == sorted(value for value, _message in progress)
     assert any(message == "Local Whisper transcription complete" for _value, message in progress)
+
+
+def test_audio_less_auto_ingest_skips_whisper_and_reuses_cache(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = source_root / "animation.gif"
+    source.write_bytes(b"animated visual states")
+    acquire, calls = _fake_acquirer(transcript_texts=(), has_audio=False)
+    transcribe_calls = 0
+
+    def transcribe(
+        _media_path: Path,
+        **_kwargs: object,
+    ) -> tuple[AcquiredTranscriptSegment, ...]:
+        nonlocal transcribe_calls
+        transcribe_calls += 1
+        raise AssertionError("audio-less media must not invoke Whisper")
+
+    service = KeyframeService(
+        settings=settings,
+        acquire=acquire,
+        extract_visuals=_fake_visual_extractor(),
+        transcribe=transcribe,
+        has_whisper=lambda: True,
+    )
+
+    first = service.ingest(
+        str(source),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.AUTO,
+    )
+    second = service.ingest(
+        str(source),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.AUTO,
+    )
+
+    assert first.has_audio is False
+    assert first.has_transcript is False
+    assert "Source has no audio stream; speech transcription was skipped." in first.warnings
+    assert second.cache_hit is True
+    assert calls == [str(source.resolve())]
+    assert transcribe_calls == 0
+
+
+def test_audio_less_explicit_whisper_fails_actionably(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = source_root / "animation.gif"
+    source.write_bytes(b"animated visual states")
+    acquire, _calls = _fake_acquirer(transcript_texts=(), has_audio=False)
+    service = KeyframeService(
+        settings=settings,
+        acquire=acquire,
+        extract_visuals=_fake_visual_extractor(),
+        has_whisper=lambda: True,
+    )
+
+    with pytest.raises(SourceError, match="source has no audio stream"):
+        service.ingest(
+            str(source),
+            mode=IngestMode.FULL,
+            transcript_mode=TranscriptMode.WHISPER,
+        )
+
+
+def test_full_gif_uses_dense_bounded_visual_sampling(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = source_root / "animation.gif"
+    source.write_bytes(b"animated visual states")
+    acquire, _calls = _fake_acquirer(transcript_texts=(), has_audio=False)
+    observed: dict[str, object] = {}
+    base_extractor = _fake_visual_extractor()
+
+    def extract(media_path: Path, work_dir: Path, **kwargs: object) -> list[ExtractedVisualMoment]:
+        observed.update(kwargs)
+        return base_extractor(media_path, work_dir, **kwargs)
+
+    service = KeyframeService(
+        settings=settings,
+        acquire=acquire,
+        extract_visuals=extract,
+        has_whisper=lambda: True,
+    )
+
+    service.ingest(
+        str(source),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.AUTO,
+    )
+
+    assert observed["fps"] == 8.0
+    assert observed["distance_threshold"] == 0
+    assert observed["min_stable_seconds"] == 0.125
+    assert observed["max_moments"] == 48
+
+
+def test_full_gif_sampling_cap_holds_for_long_sources(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = source_root / "long-animation.gif"
+    source.write_bytes(b"long animated visual states")
+    duration_s = 14_400.0
+    acquire, _calls = _fake_acquirer(
+        transcript_texts=(), has_audio=False, duration_s=duration_s
+    )
+    observed: dict[str, object] = {}
+    base_extractor = _fake_visual_extractor()
+
+    def extract(media_path: Path, work_dir: Path, **kwargs: object) -> list[ExtractedVisualMoment]:
+        observed.update(kwargs)
+        return base_extractor(media_path, work_dir, **kwargs)
+
+    service = KeyframeService(
+        settings=settings,
+        acquire=acquire,
+        extract_visuals=extract,
+        has_whisper=lambda: True,
+    )
+
+    service.ingest(
+        str(source),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.AUTO,
+        max_duration_s=int(duration_s),
+    )
+
+    sample_fps = observed["fps"]
+    assert isinstance(sample_fps, float)
+    assert sample_fps * duration_s <= GIF_FULL_MAX_SAMPLES + 1e-9
 
 
 def test_zero_moment_full_whisper_reports_both_outcomes_and_actionable_read_errors(

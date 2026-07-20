@@ -25,7 +25,7 @@ three non-Codex project registrations:
 | Antigravity/Agy | `.agents/mcp_config.json` | `.agents/skills/keyframe-video-rag/SKILL.md` |
 
 These project registrations run the current checkout with `uv run`. The
-installable plugin registrations use `uvx` and the immutable `v0.1.0` release
+installable plugin registrations use `uvx` and the immutable `v0.1.1` release
 tag. Do not enable both the project registration and an installed Keyframe
 plugin in the same workspace: that starts two local servers backed by the same
 cache.
@@ -48,7 +48,7 @@ To register the tagged release for every Claude workspace instead, run:
 ```bash
 claude mcp add --transport stdio --scope user keyframe -- \
   uvx --python 3.12 --from \
-  "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.0" \
+  "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.1" \
   video-context-mcp serve --transport stdio
 ```
 
@@ -105,12 +105,15 @@ For a user-wide server, place this entry under `mcpServers` in
         "--python",
         "3.12",
         "--from",
-        "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.0",
+        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.1",
         "video-context-mcp",
         "serve",
         "--transport",
         "stdio"
-      ]
+      ],
+      "env": {
+        "KEYFRAME_ALLOW_TEMP_UPLOADS": "true"
+      }
     }
   }
 }
@@ -119,7 +122,7 @@ For a user-wide server, place this entry under `mcpServers` in
 To index the repository as a Cursor plugin marketplace, run:
 
 ```bash
-agent plugin marketplace add --git-ref v0.1.0 \
+agent plugin marketplace add --git-ref v0.1.1 \
   https://github.com/MatthewOscar/Keyframe.git
 ```
 
@@ -147,12 +150,15 @@ For a user-wide server, put this in `~/.gemini/config/mcp_config.json`:
         "--python",
         "3.12",
         "--from",
-        "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.0",
+        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.1",
         "video-context-mcp",
         "serve",
         "--transport",
         "stdio"
-      ]
+      ],
+      "env": {
+        "KEYFRAME_ALLOW_TEMP_UPLOADS": "true"
+      }
     }
   }
 }
@@ -176,10 +182,14 @@ the workspace config nor its `cwd` value grants file access by itself.
 
 ## Local video authorization
 
-Remote URLs need no filesystem grant. For local videos, Keyframe accepts only
-paths under Roots advertised by the client or explicit
-`KEYFRAME_ALLOWED_ROOTS`. The launcher's working directory is never an implicit
-grant.
+Remote URLs need no filesystem grant. For local videos and animated GIFs,
+Keyframe accepts only paths under Roots advertised by the client, explicit
+`KEYFRAME_ALLOWED_ROOTS`, or the private upload staging directory when
+`KEYFRAME_ALLOW_TEMP_UPLOADS=true`. The bundled plugin enables only that staging
+root; its skill creates a unique child with the OS `mktemp` or random-UUID
+equivalent, copies the selected attachment into that child once, keeps it through
+any full upgrade, and then removes that exact child. The launcher's working
+directory and the rest of the OS temp tree are never implicit grants.
 
 Add an `env` object to the relevant server entry when a client does not expose
 the video folder as a Root:
@@ -195,6 +205,25 @@ the video folder as a Root:
 Use the operating system path separator for multiple roots (`:` on macOS and
 Linux, `;` on Windows). Grant only the smallest directories needed.
 
+Do not guess the upload staging path or copy directly into the shared root. On
+an authorization error, use the exact cross-platform upload root returned by
+Keyframe, create a unique child beneath it, and remove only that child after the
+last possible full upgrade. If you create a custom registration and want the
+same attachment workflow, add:
+
+```json
+{
+  "env": {
+    "KEYFRAME_ALLOW_TEMP_UPLOADS": "true"
+  }
+}
+```
+
+On POSIX, Keyframe verifies ownership and restricts its temp namespace and
+upload root to mode `0700`. On Windows, directory privacy relies on the inherited
+ACL of the current user's temp folder because POSIX ownership and mode bits are
+not available.
+
 ## Client-specific limits
 
 - The Codex plugin retains its documented 180-second startup and 1,900-second
@@ -205,9 +234,9 @@ Linux, `;` on Windows). Grant only the smallest directories needed.
   mode; if a client cancels a full run, retry safely because ingest is locked,
   staged, and atomically published.
 - Project configs run the checkout; plugin and global examples require the
-  `v0.1.0` tag. Until that human release step is complete, use project mode or
+  `v0.1.1` tag. Until that human release step is complete, use project mode or
   a local plugin checkout.
-- Windows remains preview-level for Keyframe v0.1.0.
+- Windows remains preview-level for Keyframe v0.1.1.
 
 The relevant client specifications are maintained by
 [Claude Code](https://code.claude.com/docs/en/mcp),

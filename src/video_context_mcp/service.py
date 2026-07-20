@@ -33,6 +33,9 @@ from video_context_mcp.acquisition import (
 )
 from video_context_mcp.config import Settings
 from video_context_mcp.constants import (
+    GIF_FULL_MAX_MOMENTS,
+    GIF_FULL_MAX_SAMPLES,
+    GIF_FULL_SAMPLE_FPS,
     MAX_CONFIGURABLE_DURATION_S,
     MAX_IMAGE_BYTES,
     MAX_IMAGE_EDGE,
@@ -225,10 +228,11 @@ class KeyframeService:
         )
         extra_warnings: list[str] = []
         try:
-            should_whisper = not acquired.transcript and transcript_mode in {
-                TranscriptMode.AUTO,
-                TranscriptMode.WHISPER,
-            }
+            should_whisper = (
+                acquired.metadata.has_audio
+                and not acquired.transcript
+                and transcript_mode in {TranscriptMode.AUTO, TranscriptMode.WHISPER}
+            )
             if should_whisper and self._has_whisper() and acquired.media_path is None:
                 acquired.cleanup()
                 acquired = self._acquire(
@@ -271,7 +275,16 @@ class KeyframeService:
                 TranscriptMode.AUTO,
                 TranscriptMode.WHISPER,
             }:
-                if not self._has_whisper():
+                if not acquired.metadata.has_audio:
+                    if transcript_mode is TranscriptMode.WHISPER:
+                        raise SourceError(
+                            "Whisper transcription was requested, but the source has no audio "
+                            "stream. Use transcript_mode='none' or 'auto' for visual-only media."
+                        )
+                    extra_warnings.append(
+                        "Source has no audio stream; speech transcription was skipped."
+                    )
+                elif not self._has_whisper():
                     if transcript_mode is TranscriptMode.WHISPER:
                         raise ConfigurationError(
                             "Whisper transcription was requested but the optional dependency is "
@@ -339,6 +352,7 @@ class KeyframeService:
                             return self._extract_and_publish(
                                 video_id,
                                 visual_media_path,
+                                media_duration_s=acquired.metadata.duration_s,
                                 coverage=visual_coverage,
                                 probe_plan=probe_plan,
                                 progress=progress,
@@ -418,6 +432,7 @@ class KeyframeService:
                         for item in acquired.chapters
                     ),
                     has_transcript=bool(segments),
+                    has_audio=acquired.metadata.has_audio,
                     transcript_mode=transcript_mode,
                     indexed_mode=indexed_mode,
                     visual_coverage=visual_coverage,
@@ -735,6 +750,7 @@ class KeyframeService:
         video_id: str,
         media_path: Path,
         *,
+        media_duration_s: float,
         coverage: VisualCoverage,
         probe_plan: VisualProbePlan | None,
         progress: ProgressCallback | None,
@@ -766,6 +782,19 @@ class KeyframeService:
                     **extractor_kwargs,
                 )
             elif coverage is VisualCoverage.FULL:
+                if media_path.suffix.lower() == ".gif":
+                    sample_fps = min(
+                        GIF_FULL_SAMPLE_FPS,
+                        GIF_FULL_MAX_SAMPLES / max(media_duration_s, 0.001),
+                    )
+                    extractor_kwargs.update(
+                        {
+                            "fps": sample_fps,
+                            "distance_threshold": 0,
+                            "min_stable_seconds": 1.0 / sample_fps,
+                            "max_moments": GIF_FULL_MAX_MOMENTS,
+                        }
+                    )
                 extracted = self._extract_visuals(
                     media_path,
                     work_dir / "analysis",
@@ -992,6 +1021,7 @@ class KeyframeService:
             return not (
                 requested_transcript is TranscriptMode.AUTO
                 and not video.has_transcript
+                and video.has_audio
                 and self._has_whisper()
             )
         return (
@@ -1031,6 +1061,7 @@ class KeyframeService:
             availability=video.availability,
             chapters=video.chapters,
             has_transcript=video.has_transcript,
+            has_audio=video.has_audio,
             transcript_mode=video.transcript_mode,
             keyframe_count=video.keyframe_count,
             indexed_mode=video.indexed_mode,

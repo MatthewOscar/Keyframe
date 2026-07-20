@@ -103,7 +103,7 @@ def test_local_validation_resolves_symlinks_and_enforces_roots(tmp_path: Path) -
     symlink.symlink_to(target)
     local_settings = Settings(home=tmp_path / "home", allowed_roots=(allowed.resolve(),))
 
-    with pytest.raises(SourceError, match="outside KEYFRAME_ALLOWED_ROOTS"):
+    with pytest.raises(SourceError, match="outside the authorized roots"):
         validate_local_path(symlink, local_settings)
 
 
@@ -145,8 +145,96 @@ def test_file_root_authorizes_only_that_exact_file(tmp_path: Path) -> None:
 
     assert validate_local_path(allowed, settings) == allowed.resolve()
     assert validate_local_path(allowed.name, settings) == allowed.resolve()
-    with pytest.raises(SourceError, match="outside KEYFRAME_ALLOWED_ROOTS"):
+    with pytest.raises(SourceError, match="outside the authorized roots"):
         validate_local_path(sibling, settings)
+
+
+def test_temp_upload_staging_requires_collision_safe_child(tmp_path: Path) -> None:
+    settings = Settings(
+        home=tmp_path / "home",
+        allowed_roots=(),
+        allow_temp_uploads=True,
+    )
+    settings.ensure_directories()
+    direct = settings.upload_dir / "selected.mp4"
+    direct.write_bytes(b"unsafe shared basename")
+    first_upload = settings.upload_dir / "upload-11111111"
+    second_upload = settings.upload_dir / "upload-22222222"
+    first_upload.mkdir(mode=0o700)
+    second_upload.mkdir(mode=0o700)
+    first_staged = first_upload / "selected.mp4"
+    second_staged = second_upload / "selected.mp4"
+    first_staged.write_bytes(b"first selected attachment")
+    second_staged.write_bytes(b"second selected attachment")
+    outside = settings.tmp_dir / "outside.mp4"
+    outside.write_bytes(b"not explicitly staged")
+
+    with pytest.raises(SourceError, match="cannot be placed directly in the shared upload root"):
+        validate_local_path(direct, settings)
+    assert validate_local_path(first_staged, settings) == first_staged.resolve()
+    assert validate_local_path(second_staged, settings) == second_staged.resolve()
+    with pytest.raises(SourceError, match="Temporary upload root"):
+        validate_local_path(outside, settings)
+
+
+def test_temp_upload_hint_covers_missing_relative_and_absolute_paths(tmp_path: Path) -> None:
+    settings = Settings(
+        home=tmp_path / "home",
+        allowed_roots=(),
+        allow_temp_uploads=True,
+    )
+    settings.ensure_directories()
+
+    for source in ("missing.mp4", tmp_path / "also-missing.mp4"):
+        with pytest.raises(SourceError) as error:
+            validate_local_path(source, settings)
+        message = str(error.value)
+        assert f"Temporary upload root: {settings.upload_dir}." in message
+        assert "unique per-upload child directory" in message
+
+
+def test_temp_upload_error_does_not_list_unrelated_authorized_roots(tmp_path: Path) -> None:
+    durable_root = tmp_path / "private-videos"
+    durable_root.mkdir()
+    outside = tmp_path / "selected.mp4"
+    outside.write_bytes(b"selected attachment")
+    settings = Settings(
+        home=tmp_path / "home",
+        allowed_roots=(durable_root.resolve(),),
+        allow_temp_uploads=True,
+    )
+    settings.ensure_directories()
+
+    with pytest.raises(SourceError) as error:
+        validate_local_path(outside, settings)
+
+    message = str(error.value)
+    assert str(durable_root) not in message
+    assert str(settings.upload_dir) in message
+
+
+def test_ambiguous_relative_error_uses_hint_without_leaking_matches(tmp_path: Path) -> None:
+    first = tmp_path / "first-private-root"
+    second = tmp_path / "second-private-root"
+    first.mkdir()
+    second.mkdir()
+    (first / "selected.mp4").write_bytes(b"first")
+    (second / "selected.mp4").write_bytes(b"second")
+    settings = Settings(
+        home=tmp_path / "home",
+        allowed_roots=(first.resolve(), second.resolve()),
+        allow_temp_uploads=True,
+    )
+    settings.ensure_directories()
+
+    with pytest.raises(SourceError) as error:
+        validate_local_path("selected.mp4", settings)
+
+    message = str(error.value)
+    assert "ambiguous across authorized roots" in message
+    assert str(first) not in message
+    assert str(second) not in message
+    assert str(settings.upload_dir) in message
 
 
 def test_exact_file_root_does_not_authorize_sibling_sidecar(tmp_path: Path) -> None:
@@ -219,6 +307,7 @@ def _probe_document(
     duration: str = "12.5",
     subtitle: bool = False,
     chapters: bool = False,
+    audio: bool = True,
 ) -> dict[str, Any]:
     streams: list[dict[str, Any]] = [
         {
@@ -229,6 +318,8 @@ def _probe_document(
             "avg_frame_rate": "30000/1001",
         }
     ]
+    if audio:
+        streams.append({"index": 1, "codec_type": "audio", "codec_name": "aac"})
     if subtitle:
         streams.append(
             {
@@ -272,6 +363,7 @@ def test_local_acquisition_normalizes_metadata_and_sidecar(
     assert acquired.metadata.duration_s == 12.5
     assert acquired.metadata.width == 1920
     assert acquired.metadata.fps == pytest.approx(29.97, rel=0.001)
+    assert acquired.metadata.has_audio is True
     assert acquired.metadata.video_id.startswith("local-")
     assert acquired.chapters[0].title == "Local intro"
     assert acquired.transcript[0].text == "Welcome"
@@ -280,6 +372,47 @@ def test_local_acquisition_normalizes_metadata_and_sidecar(
     assert acquired.media_path == video.resolve()
     acquired.cleanup()
     assert video.exists()
+
+
+def test_local_animated_gif_is_accepted_as_visual_only(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    animation = tmp_path / "steps.GIF"
+    animation.write_bytes(b"animated gif")
+    completed = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=json.dumps(_probe_document(duration="2.5", audio=False)),
+        stderr="",
+    )
+    monkeypatch.setattr(acquisition.subprocess, "run", lambda *_args, **_kwargs: completed)
+
+    acquired = acquire_local(animation, settings, transcript_mode="auto")
+
+    assert acquired.metadata.duration_s == 2.5
+    assert acquired.metadata.has_audio is False
+    assert acquired.media_path == animation.resolve()
+
+
+def test_static_gif_failure_is_actionable(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = tmp_path / "static.gif"
+    image.write_bytes(b"static gif")
+    completed = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=json.dumps(_probe_document(duration="0", audio=False)),
+        stderr="",
+    )
+    monkeypatch.setattr(acquisition.subprocess, "run", lambda *_args, **_kwargs: completed)
+
+    with pytest.raises(SourceError, match="supports animated GIFs"):
+        acquire_local(image, settings)
 
 
 def test_local_acquisition_reads_embedded_subtitles(
@@ -364,6 +497,7 @@ def _install_fake_ydl(
     metadata: dict[str, Any],
     *,
     download_result: dict[str, Any] | None = None,
+    downloaded_has_audio: bool = True,
 ) -> list[tuple[dict[str, Any], bool]]:
     calls: list[tuple[dict[str, Any], bool]] = []
 
@@ -391,7 +525,7 @@ def _install_fake_ydl(
     monkeypatch.setattr(
         acquisition,
         "_probe_downloaded_media",
-        lambda *_args, **_kwargs: None,
+        lambda *_args, **_kwargs: downloaded_has_audio,
     )
     return calls
 
@@ -456,6 +590,111 @@ def test_remote_unlisted_availability_is_preserved(
 
     assert acquired.metadata.availability == "unlisted"
     acquired.cleanup()
+
+
+def test_remote_audio_capability_is_preserved(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _install_fake_ydl(
+        monkeypatch,
+        _remote_info(acodec="none"),
+        downloaded_has_audio=False,
+    )
+
+    acquired = acquire_remote(f"https://{PUBLIC_IP}/animation.gif", settings)
+
+    assert acquired.metadata.has_audio is False
+    assert calls[1][0]["format"] == (
+        "bestvideo[height<=360]/best[height<=360]/worstvideo/worst"
+    )
+    acquired.cleanup()
+
+
+def test_remote_audio_formats_override_video_only_top_level_metadata() -> None:
+    info = _remote_info(
+        acodec="none",
+        requested_formats=[
+            {"vcodec": "avc1", "acodec": "none"},
+            {"vcodec": "none", "acodec": "opus"},
+        ],
+    )
+
+    assert acquisition._remote_has_audio(info) is True
+
+
+def test_audio_less_download_overrides_incomplete_initial_metadata(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_ydl(
+        monkeypatch,
+        _remote_info(),
+        downloaded_has_audio=False,
+    )
+
+    acquired = acquire_remote(f"https://{PUBLIC_IP}/video", settings)
+
+    assert acquired.metadata.has_audio is False
+    acquired.cleanup()
+
+
+def test_audio_bearing_full_download_overrides_incorrect_initial_metadata(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_ydl(
+        monkeypatch,
+        _remote_info(acodec="none"),
+        downloaded_has_audio=True,
+    )
+
+    acquired = acquire_remote(
+        f"https://{PUBLIC_IP}/video",
+        settings,
+        mode="full",
+        transcript_mode="none",
+    )
+
+    assert acquired.metadata.has_audio is True
+    acquired.cleanup()
+
+
+def test_video_only_probe_does_not_erase_source_audio_metadata(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_ydl(
+        monkeypatch,
+        _remote_info(acodec="aac"),
+        downloaded_has_audio=False,
+    )
+
+    acquired = acquire_remote(
+        f"https://{PUBLIC_IP}/video",
+        settings,
+        transcript_mode="none",
+    )
+
+    assert acquired.metadata.has_audio is True
+    acquired.cleanup()
+
+
+@pytest.mark.parametrize("has_audio", [False, True])
+def test_downloaded_media_probe_returns_audio_stream_presence(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    has_audio: bool,
+) -> None:
+    media = tmp_path / "downloaded.mp4"
+    media.write_bytes(b"downloaded media")
+    probe = _probe_document(duration="42", audio=has_audio)
+    monkeypatch.setattr(acquisition, "_run_json_command", lambda *_args, **_kwargs: probe)
+
+    assert (
+        acquisition._probe_downloaded_media(media, settings, max_duration_s=60) is has_audio
+    )
 
 
 def test_auto_transcript_falls_back_when_manual_caption_download_fails(

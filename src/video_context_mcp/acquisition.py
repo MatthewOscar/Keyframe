@@ -22,7 +22,7 @@ import subprocess
 import tempfile
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
@@ -128,6 +128,7 @@ class SourceMetadata:
     width: int | None = None
     height: int | None = None
     fps: float | None = None
+    has_audio: bool = True
     content_sha256: str | None = None
     content_mtime_ns: int | None = None
     availability: Availability = "public"
@@ -194,11 +195,30 @@ def _effective_duration_limit(settings: Settings, requested: int | None) -> int:
     return limit
 
 
+def _temp_upload_hint(settings: Settings) -> str:
+    if not settings.allow_temp_uploads:
+        return ""
+    return (
+        f" Temporary upload root: {settings.upload_dir}. Create a unique per-upload child "
+        "directory under that root with an OS mktemp or random-UUID equivalent; copy only "
+        "this selected attachment into that child while preserving its extension; retry "
+        "ingestion from the staged path; after the final possible full visual upgrade, "
+        "remove only that child directory and its disposable contents."
+    )
+
+
+def _local_source_error(message: str, settings: Settings) -> SourceError:
+    """Attach the same bounded staging recovery to actionable local-path errors."""
+
+    return SourceError(f"{message}{_temp_upload_hint(settings)}")
+
+
 def validate_local_path(source: str | Path, settings: Settings) -> Path:
     """Resolve and validate a caller-owned video path against configured roots."""
 
     candidate = Path(source).expanduser()
-    if not settings.allowed_roots:
+    authorized_roots = settings.authorized_local_roots
+    if not authorized_roots:
         raise SourceError(
             "No local-video roots are authorized. Open the file or its directory as an MCP "
             "workspace root, or set KEYFRAME_ALLOWED_ROOTS explicitly."
@@ -207,12 +227,13 @@ def validate_local_path(source: str | Path, settings: Settings) -> Path:
         try:
             resolved = candidate.resolve(strict=True)
         except OSError as exc:
-            raise SourceError(
-                f"Local video does not exist or cannot be resolved: {candidate}"
+            raise _local_source_error(
+                f"Local video does not exist, is inaccessible, or cannot be resolved: {candidate}.",
+                settings,
             ) from exc
     else:
         matches: list[Path] = []
-        for root in settings.allowed_roots:
+        for root in authorized_roots:
             try:
                 if root.is_dir():
                     possible = (root / candidate).resolve(strict=True)
@@ -227,26 +248,39 @@ def validate_local_path(source: str | Path, settings: Settings) -> Path:
             if possible not in matches:
                 matches.append(possible)
         if not matches:
-            raise SourceError(
-                f"Relative local video {candidate!s} was not found under any authorized root."
+            raise _local_source_error(
+                f"Relative local video {candidate!s} was not found under any authorized root.",
+                settings,
             )
         if len(matches) > 1:
-            choices = ", ".join(str(path) for path in matches)
-            raise SourceError(
-                f"Relative local video {candidate!s} is ambiguous across authorized roots "
-                f"({choices}); use an absolute path."
+            raise _local_source_error(
+                f"Relative local video {candidate!s} is ambiguous across authorized roots; "
+                "use an absolute path.",
+                settings,
             )
         resolved = matches[0]
     if not resolved.is_file():
-        raise SourceError(f"Local video must be a regular file: {resolved}")
+        raise _local_source_error(
+            f"Local video must be a regular file: {resolved}.",
+            settings,
+        )
     if resolved.suffix.lower() not in SUPPORTED_VIDEO_EXTENSIONS:
         supported = ", ".join(sorted(SUPPORTED_VIDEO_EXTENSIONS))
         raise SourceError(
             f"Unsupported local video extension {resolved.suffix!r}; use one of {supported}."
         )
-    if not any(resolved.is_relative_to(root) for root in settings.allowed_roots):
-        roots = ", ".join(str(root) for root in settings.allowed_roots)
-        raise SourceError(f"Local video is outside KEYFRAME_ALLOWED_ROOTS ({roots}): {resolved}")
+    if not any(resolved.is_relative_to(root) for root in authorized_roots):
+        raise _local_source_error(
+            f"Local video is outside the authorized roots: {resolved}.",
+            settings,
+        )
+    if settings.allow_temp_uploads:
+        upload_root = settings.upload_dir
+        if resolved.parent == upload_root:
+            raise _local_source_error(
+                "A staged attachment cannot be placed directly in the shared upload root.",
+                settings,
+            )
     try:
         size = resolved.stat().st_size
     except OSError as exc:
@@ -528,7 +562,9 @@ def _sidecar_candidates(
     settings: Settings,
 ) -> list[tuple[Path, Path]]:
     matching_directory_roots = [
-        root for root in settings.allowed_roots if root.is_dir() and video_path.is_relative_to(root)
+        root
+        for root in settings.authorized_local_roots
+        if root.is_dir() and video_path.is_relative_to(root)
     ]
     # An exact file root authorizes that video, but not sibling caption files.
     if not matching_directory_roots:
@@ -673,6 +709,11 @@ def acquire_local(
     if duration is None:
         duration = max((_as_float(item.get("duration")) or 0.0 for item in streams), default=0.0)
     if duration <= 0:
+        if path.suffix.lower() == ".gif":
+            raise SourceError(
+                f"{path} is static or has no valid animation duration. Keyframe supports "
+                "animated GIFs; attach a static GIF directly as an image."
+            )
         raise SourceError(f"Could not determine a positive duration for {path}.")
     if duration > limit:
         raise SourceError(
@@ -732,6 +773,7 @@ def acquire_local(
         width=width,
         height=height,
         fps=_parse_fps(video_stream.get("avg_frame_rate") or video_stream.get("r_frame_rate")),
+        has_audio=any(item.get("codec_type") == "audio" for item in streams),
         content_sha256=content_sha256,
         content_mtime_ns=identity_after.st_mtime_ns,
         availability="local",
@@ -1353,8 +1395,37 @@ def _remote_metadata(
         width=_as_int(info.get("width")),
         height=_as_int(info.get("height")),
         fps=_as_float(info.get("fps")),
+        has_audio=_remote_has_audio(info),
         availability=cast(Availability, str(info.get("availability") or "public").lower()),
     )
+
+
+def _remote_has_audio(info: Mapping[str, Any]) -> bool:
+    """Return false only when yt-dlp explicitly reports an audio-less source."""
+
+    explicit_audio_less = False
+    for format_field in ("requested_formats", "formats"):
+        values = info.get(format_field)
+        if not isinstance(values, list):
+            continue
+        codecs = [
+            str(item.get("acodec")).strip().lower()
+            for item in values
+            if isinstance(item, Mapping) and item.get("acodec") is not None
+        ]
+        if any(value and value != "none" for value in codecs):
+            return True
+        if codecs:
+            explicit_audio_less = True
+    codec = info.get("acodec")
+    if codec is not None:
+        normalized = str(codec).strip().lower()
+        if normalized and normalized != "none":
+            return True
+        if normalized == "none":
+            explicit_audio_less = True
+    # Unknown must remain permissive: providers do not all populate codec metadata.
+    return not explicit_audio_less
 
 
 def _find_downloaded_media(temp_dir: Path, info: Mapping[str, Any]) -> Path | None:
@@ -1462,7 +1533,7 @@ def _probe_downloaded_media(
     settings: Settings,
     *,
     max_duration_s: int,
-) -> None:
+) -> bool:
     probe = _run_json_command(
         [
             settings.ffprobe_executable,
@@ -1503,6 +1574,7 @@ def _probe_downloaded_media(
             f"Downloaded video duration is {duration:.1f}s, above the configured "
             f"{max_duration_s}s limit."
         )
+    return any(item.get("codec_type") == "audio" for item in streams)
 
 
 def acquire_remote(
@@ -1578,8 +1650,8 @@ def acquire_remote(
         # Downloads are disposable source material. Settings namespaces scratch
         # beneath the native OS temp location instead of KEYFRAME_HOME.
         temp_dir = Path(tempfile.mkdtemp(prefix="acquire-", dir=settings.tmp_dir))
-        needs_probe_audio = transcript_mode == "whisper" or (
-            transcript_mode == "auto" and not transcript
+        needs_probe_audio = _remote_has_audio(info) and (
+            transcript_mode == "whisper" or (transcript_mode == "auto" and not transcript)
         )
         profile: MediaProfile
         if mode == "full":
@@ -1600,10 +1672,25 @@ def acquire_remote(
         _validate_remote_info(downloaded_info, settings, max_duration_s=limit)
         if kind is SourceKind.DIRECT:
             _validate_reported_direct_urls(downloaded_info, settings)
-        _probe_downloaded_media(media_path, settings, max_duration_s=limit)
+        downloaded_has_audio = _probe_downloaded_media(
+            media_path,
+            settings,
+            max_duration_s=limit,
+        )
+        metadata = _remote_metadata(validated_source, kind, info, duration=duration)
+        # A probe_video download may intentionally omit source audio to save bandwidth,
+        # so a silent probe cannot disprove yt-dlp's source-level audio metadata. AV
+        # profiles are expected to preserve audio and their probed stream list is
+        # authoritative in both directions.
+        authoritative_has_audio = (
+            metadata.has_audio or downloaded_has_audio
+            if profile == "probe_video"
+            else downloaded_has_audio
+        )
+        metadata = replace(metadata, has_audio=authoritative_has_audio)
 
         return AcquiredSource(
-            metadata=_remote_metadata(validated_source, kind, info, duration=duration),
+            metadata=metadata,
             transcript=transcript,
             chapters=_chapters(info, duration=duration),
             media_path=media_path,

@@ -18,7 +18,8 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 ## Human release steps
 
 - [ ] Review the complete diff and merge the verified release branch.
-- [ ] Create and push immutable tag `v0.1.0`.
+- [x] Create and push immutable tag `v0.1.0`.
+- [ ] Create and push the verified attachment/GIF fix tag `v0.1.1`.
 - [ ] Create the free PyPI project/Trusted Publisher and confirm the workflow,
       or retain the exact Git-tag launcher already bundled in the plugin.
 - [ ] Install the tagged plugin in Codex and ChatGPT desktop and run the
@@ -28,6 +29,8 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 - [ ] Upload the first-party synthetic source video and its WebVTT captions as
       a public YouTube tutorial for the remote-ingest demo shot.
 - [ ] Run all ten prompts in `evals/cases.json` and record observed outcomes.
+- [ ] Run the Mac plugin regressions in `evals/mac-plugin-cases.json` and record
+      attachment staging, provenance, warm-cache timing, and animated-GIF results.
 - [ ] Record a public narrated YouTube demo no longer than 2:59, using only
       first-party or separately audited media and no unlicensed music.
 - [ ] Add the public video URL and public repository URL to Devpost.

@@ -6,12 +6,15 @@
         "--python",
         "3.12",
         "--from",
-        "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.0",
+        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.1",
         "video-context-mcp",
         "serve",
         "--transport",
         "stdio"
-      ]
+      ],
+      "env": {
+        "KEYFRAME_ALLOW_TEMP_UPLOADS": "true"
+      }
     }
   }
 }

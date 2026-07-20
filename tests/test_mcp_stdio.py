@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import stat
 import sys
+import tempfile
 from pathlib import Path
 
 import anyio
@@ -229,3 +232,61 @@ async def test_stdio_local_ingest_requires_client_or_configured_root(tmp_path: P
     assert result.isError is True
     message = " ".join(block.text for block in result.content if block.type == "text")
     assert "No local-video roots are authorized" in message
+
+
+@pytest.mark.asyncio
+async def test_stdio_plugin_stages_one_selected_upload_in_private_temp_root(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "video_context_mcp", "serve", "--transport", "stdio"],
+        cwd=ROOT,
+        env={
+            "KEYFRAME_HOME": str(home),
+            "KEYFRAME_ALLOW_TEMP_UPLOADS": "true",
+            "PYTHONPATH": str(ROOT / "src"),
+            "PATH": os.environ.get("PATH", ""),
+        },
+    )
+
+    with anyio.fail_after(20):
+        async with stdio_client(parameters) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                denied = await session.call_tool(
+                    "video_ingest",
+                    {"source": str(VIDEO_PATH), "mode": "fast", "transcript_mode": "none"},
+                )
+                assert denied.isError is True
+                denied_text = " ".join(
+                    block.text for block in denied.content if block.type == "text"
+                )
+                staging_match = re.search(
+                    r"Temporary upload root: (.+?)\. Create a unique per-upload child directory",
+                    denied_text,
+                )
+                assert staging_match is not None
+                upload_dir = Path(staging_match.group(1))
+                assert upload_dir.name == "uploads"
+                assert upload_dir.parent.name.startswith("keyframe-")
+
+                upload_child = Path(tempfile.mkdtemp(prefix="upload-", dir=upload_dir))
+                if os.name == "posix":
+                    assert stat.S_IMODE(upload_child.stat().st_mode) == 0o700
+                try:
+                    staged = upload_child / VIDEO_PATH.name
+                    shutil.copy2(VIDEO_PATH, staged)
+                    ingested = await session.call_tool(
+                        "video_ingest",
+                        {"source": str(staged), "mode": "fast", "transcript_mode": "none"},
+                    )
+                finally:
+                    shutil.rmtree(upload_child)
+
+    assert ingested.isError is False
+    assert ingested.structuredContent is not None
+    assert ingested.structuredContent["status"] == "ready"
+    assert ingested.structuredContent["source_type"] == "local"
+    assert not upload_child.exists()

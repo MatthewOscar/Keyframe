@@ -1,9 +1,9 @@
 {
   "name": "keyframe",
-  "version": "0.1.0",
-  "description": "Index videos locally and retrieve timestamped transcript, OCR, code, and frames through MCP.",
+  "version": "0.1.1",
+  "description": "Index videos and animated GIFs locally, then retrieve timestamped transcript, OCR, code, and frames through MCP.",
   "author": {
-    "name": "Matthew Oscar",
+    "name": "Matthew Wyatt",
     "url": "https://github.com/MatthewOscar"
   },
   "homepage": "https://github.com/MatthewOscar/Keyframe#readme",
@@ -11,6 +11,7 @@
   "license": "Apache-2.0",
   "keywords": [
     "video",
+    "animated-gif",
     "mcp",
     "ocr",
     "developer-tools",
@@ -20,12 +21,13 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Keyframe",
-    "shortDescription": "Search what tutorials say and show",
-    "longDescription": "Keyframe locally indexes public or local videos, then retrieves timestamped transcript, on-screen text, reconstructed code, and source frames for verification.",
-    "developerName": "Matthew Oscar",
+    "shortDescription": "Search what videos say and GIFs show",
+    "longDescription": "Keyframe locally indexes public or local videos and animated GIFs, then retrieves timestamped transcript, on-screen text, reconstructed code, and source frames for verification.",
+    "developerName": "Matthew Wyatt",
     "category": "Developer Tools",
     "capabilities": [
       "Local video indexing",
+      "Animated GIF state analysis",
       "Transcript and OCR search",
       "Timestamped frame retrieval"
     ],
@@ -37,7 +39,7 @@
     ],
     "brandColor": "#0F766E",
     "composerIcon": "./assets/icon.svg",
-    "logo": "./assets/logo-light.svg",
-    "logoDark": "./assets/logo-dark.svg"
+    "logo": "./assets/icon.svg",
+    "logoDark": "./assets/icon.svg"
   }
 }

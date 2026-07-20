@@ -19,6 +19,7 @@ from video_context_mcp.vision import (
     OCRResult,
     SampledFrame,
     StableRun,
+    _nearest_unique_frames,
     analyze_stable_run,
     auto_crop_text_region,
     check_parse,
@@ -118,6 +119,10 @@ def test_visual_probe_plan_clamps_boundaries_for_short_video() -> None:
         0.0 <= timestamp < 1.0
         for timestamp in (*plan.chapter_timestamps_s, *plan.uniform_timestamps_s)
     )
+
+
+def test_nearest_unique_frames_handles_empty_decoded_input() -> None:
+    assert _nearest_unique_frames([], (0.25, 0.75)) == []
 
 
 def test_visual_probe_retains_at_most_twelve_and_only_ocrs_retained_frames(
@@ -229,6 +234,33 @@ def test_visual_analysis_uses_bounded_workers_and_preserves_timeline_order(
     assert progress[-1] == 1.0
 
 
+def test_full_visual_analysis_evenly_caps_retained_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video = tmp_path / "animation.gif"
+    video.write_bytes(b"fixture")
+    frames: list[SampledFrame] = []
+    runs: list[StableRun] = []
+    for index in range(10):
+        frame_path = tmp_path / f"frame-{index}.jpg"
+        Image.new("RGB", (64, 36), (index * 20, 0, 0)).save(frame_path)
+        frame = SampledFrame(float(index), frame_path, f"{index:016x}")
+        frames.append(frame)
+        runs.append(StableRun(float(index), float(index + 1), 1.0, (frame,), frame))
+
+    monkeypatch.setattr("video_context_mcp.vision.sample_frames", lambda *_a, **_k: frames)
+    monkeypatch.setattr("video_context_mcp.vision.group_stable_runs", lambda *_a, **_k: runs)
+    monkeypatch.setattr(
+        "video_context_mcp.vision.analyze_stable_run",
+        lambda run, **_kwargs: SimpleNamespace(timestamp_s=run.representative.timestamp_s),
+    )
+
+    moments = extract_visual_moments(video, tmp_path / "work", max_moments=4)
+
+    assert [moment.timestamp_s for moment in moments] == [0.0, 3.0, 6.0, 9.0]
+
+
 @pytest.mark.parametrize("workers", [0, -1, True, 1.5])
 def test_visual_analysis_rejects_invalid_worker_counts(
     tmp_path: Path,
@@ -238,6 +270,17 @@ def test_visual_analysis_rejects_invalid_worker_counts(
     video.write_bytes(b"fixture")
     with pytest.raises(ValueError, match="ocr_workers"):
         extract_visual_moments(video, tmp_path / "work", ocr_workers=workers)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("maximum", [0, -1, True, 1.5])
+def test_visual_analysis_rejects_invalid_maximums(
+    tmp_path: Path,
+    maximum: object,
+) -> None:
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"fixture")
+    with pytest.raises(ValueError, match="max_moments"):
+        extract_visual_moments(video, tmp_path / "work", max_moments=maximum)  # type: ignore[arg-type]
 
 
 def test_stability_grouping_rejects_out_of_order_frames(tmp_path: Path) -> None:

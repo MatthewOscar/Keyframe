@@ -1,4 +1,4 @@
 {
   "name": "keyframe",
-  "description": "Index videos locally and retrieve timestamped transcript, OCR, code, and frames through MCP."
+  "description": "Index videos and animated GIFs locally, then retrieve timestamped transcript, OCR, code, and frames through MCP."
 }

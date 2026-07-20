@@ -4,16 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "video-context-mcp"
-version = "0.1.0"
-description = "Local video RAG for MCP-compatible coding agents"
+version = "0.1.1"
+description = "Local video and animated-GIF RAG for MCP-compatible coding agents"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]
 authors = [
-  { name = "Matthew Oscar" },
+  { name = "Matthew Wyatt" },
 ]
-keywords = ["mcp", "video", "ocr", "codex", "claude-code", "cursor", "rag"]
+keywords = ["mcp", "video", "animated-gif", "ocr", "codex", "claude-code", "cursor", "rag"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: Apache Software License",
@@ -56,6 +56,11 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/video_context_mcp"]
+
+[tool.hatch.build.targets.sdist]
+# Use an allowlist so private ignored evaluation artifacts can never enter a
+# published source archive merely because they exist beside the checkout.
+only-include = ["src", "tests"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers --strict-config"

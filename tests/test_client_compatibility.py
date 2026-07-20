@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import json
 import tomllib
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "keyframe"
-RELEASE_SOURCE = "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.0"
+PROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+PACKAGE_VERSION = PROJECT["project"]["version"]
+RELEASE_SOURCE = (
+    "video-context-mcp[whisper] @ "
+    f"git+https://github.com/MatthewOscar/Keyframe.git@v{PACKAGE_VERSION}"
+)
 SERVER_TAIL = ["video-context-mcp", "serve", "--transport", "stdio"]
 RELEASE_ARGS = ["--python", "3.12", "--from", RELEASE_SOURCE, *SERVER_TAIL]
 
@@ -29,6 +35,13 @@ def _assert_release_launcher(server: dict[str, Any]) -> None:
     assert server["args"] == RELEASE_ARGS
 
 
+def test_source_distribution_allowlist_excludes_private_local_evaluations() -> None:
+    sdist = PROJECT["tool"]["hatch"]["build"]["targets"]["sdist"]
+    assert sdist["only-include"] == ["src", "tests"]
+    ignore_patterns = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "/local-evals/" in ignore_patterns
+
+
 def test_project_configs_use_each_clients_documented_discovery_schema() -> None:
     claude = _server(ROOT / ".mcp.json")
     assert claude == {
@@ -40,6 +53,7 @@ def test_project_configs_use_each_clients_documented_discovery_schema() -> None:
             "${CLAUDE_PROJECT_DIR:-.}",
             *SERVER_TAIL,
         ],
+        "env": {"KEYFRAME_ALLOW_TEMP_UPLOADS": "true"},
         "timeout": 1_900_000,
     }
 
@@ -48,6 +62,7 @@ def test_project_configs_use_each_clients_documented_discovery_schema() -> None:
         "type": "stdio",
         "command": "uv",
         "args": ["run", "--project", ".", *SERVER_TAIL],
+        "env": {"KEYFRAME_ALLOW_TEMP_UPLOADS": "true"},
     }
 
     agy = _server(ROOT / ".agents" / "mcp_config.json")
@@ -55,6 +70,7 @@ def test_project_configs_use_each_clients_documented_discovery_schema() -> None:
         "command": "uv",
         "args": ["run", "--project", ".", *SERVER_TAIL],
         "cwd": ".",
+        "env": {"KEYFRAME_ALLOW_TEMP_UPLOADS": "true"},
     }
 
 
@@ -117,15 +133,26 @@ def test_plugin_manifests_reference_client_specific_mcp_configs() -> None:
         "mcpServers",
     }
 
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    package_version = project["project"]["version"]
-    assert {codex["version"], claude["version"], cursor["version"]} == {package_version}
+    assert {codex["version"], claude["version"], cursor["version"]} == {PACKAGE_VERSION}
+    assert PROJECT["project"]["authors"] == [{"name": "Matthew Wyatt"}]
+    assert codex["author"]["name"] == "Matthew Wyatt"
+    assert codex["interface"]["developerName"] == "Matthew Wyatt"
+    assert codex["interface"]["shortDescription"] == "Search what videos say and GIFs show"
+    assert claude["author"]["name"] == "Matthew Wyatt"
+    assert cursor["author"]["name"] == "Matthew Wyatt"
+
+    icon_path = PLUGIN / codex["interface"]["composerIcon"]
+    assert codex["interface"]["logo"] == codex["interface"]["composerIcon"]
+    assert codex["interface"]["logoDark"] == codex["interface"]["composerIcon"]
+    assert icon_path.is_file()
+    view_box = ET.parse(icon_path).getroot().attrib["viewBox"].split()
+    assert view_box[2] == view_box[3]
 
     assert _load(PLUGIN / "plugin.json") == {
         "name": "keyframe",
         "description": (
-            "Index videos locally and retrieve timestamped transcript, OCR, code, and "
-            "frames through MCP."
+            "Index videos and animated GIFs locally, then retrieve timestamped transcript, "
+            "OCR, code, and frames through MCP."
         ),
     }
 
@@ -138,6 +165,7 @@ def test_plugin_launchers_pin_the_release_without_cross_client_timeout_fields() 
 
     for server in (codex, claude, cursor, agy):
         _assert_release_launcher(server)
+        assert server["env"] == {"KEYFRAME_ALLOW_TEMP_UPLOADS": "true"}
 
     assert codex["startup_timeout_sec"] == 180
     assert codex["tool_timeout_sec"] == 1900
@@ -180,3 +208,7 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert contents[0] == contents[1] == contents[2]
     assert "Use when a coding agent must understand" in contents[0]
     assert "Use when Codex must understand" not in contents[0]
+    assert "For each source, make at most one successful fast ingest" in contents[0]
+    server_source = (ROOT / "src/video_context_mcp/server.py").read_text(encoding="utf-8")
+    assert "Ingest each source with mode='fast' once" in server_source
+    assert "one mode='full' upgrade per source" in server_source

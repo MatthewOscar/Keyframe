@@ -17,7 +17,7 @@ come from prior responses; clients must preserve opaque cursors unchanged.
 
 A fresh fast-only index returns `visual_coverage="probe"` and at most 12 sparse
 visual moments; an existing full index can satisfy a later fast request. Branch
-on the returned coverage and transcript availability. Immediately list at most
+on the returned coverage, `has_audio`, and transcript availability. Immediately list at most
 12 moment summaries; this does not load images. A probe miss is not evidence
 that something was absent.
 
@@ -26,6 +26,10 @@ UI state changes, probe gaps, uncertain or contradictory OCR, and negative
 visual claims. A single relevant probe image can settle one targeted visual
 fact. A completed full index reports `visual_coverage="full"` and also satisfies
 later fast requests.
+
+Local animated GIFs follow the same calls. They report `has_audio=false`, skip
+Whisper under `auto`, and use denser but bounded one-loop sampling in full mode.
+Static GIFs should be supplied as ordinary images.
 
 ## Read a bounded transcript page
 
@@ -109,3 +113,5 @@ Invalid sources, unsupported protected videos, missing native tools, malformed
 or stale cursors, missing retained frames, and invalid selectors are returned
 as actionable MCP tool errors. Do not retry authentication, DRM, playlist, or
 livestream failures with cookies; those flows are deliberately out of scope.
+Do not claim a Keyframe result unless ingest returned `status="ready"` and a
+`video_id`; a tool error followed by native media analysis is not Keyframe evidence.

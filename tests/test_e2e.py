@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from PIL import Image, ImageDraw, ImageFont
 
 from video_context_mcp.acquisition import acquire_source
 from video_context_mcp.config import Settings
@@ -202,6 +203,83 @@ def test_full_local_video_rag_round_trip_and_persistent_cache(tmp_path: Path) ->
 
     assert VIDEO_PATH.is_file()
     assert not any(settings.tmp_dir.iterdir())
+
+
+def test_animated_gif_visual_round_trip_skips_speech_and_caches(tmp_path: Path) -> None:
+    from video_context_mcp.service import KeyframeService
+
+    animation = tmp_path / "workflow.gif"
+    font = ImageFont.load_default(size=48)
+    frames: list[Image.Image] = []
+    for label, color in (
+        ("STATE ALPHA", (230, 245, 255)),
+        ("STATE BRAVO", (255, 240, 210)),
+        ("STATE CHARLIE", (225, 255, 225)),
+    ):
+        frame = Image.new("RGB", (640, 360), color)
+        drawing = ImageDraw.Draw(frame)
+        drawing.rectangle((30, 30, 610, 330), outline="black", width=8)
+        drawing.text((100, 145), label, fill="black", font=font)
+        frames.append(frame)
+    frames[0].save(
+        animation,
+        save_all=True,
+        append_images=frames[1:],
+        duration=1_000,
+        loop=0,
+    )
+    settings = Settings(
+        home=tmp_path / "gif-home",
+        allowed_roots=(tmp_path.resolve(),),
+        ffmpeg_executable=shutil.which("ffmpeg") or "ffmpeg",
+        ffprobe_executable=shutil.which("ffprobe") or "ffprobe",
+        tesseract_executable=shutil.which("tesseract") or "tesseract",
+        node_executable=shutil.which("node") or "node",
+    )
+    service = KeyframeService(settings=settings)
+
+    probed = service.ingest(
+        str(animation),
+        mode=IngestMode.FAST,
+        transcript_mode=TranscriptMode.AUTO,
+        max_duration_s=30,
+    )
+    assert probed.has_audio is False
+    assert probed.visual_coverage is VisualCoverage.PROBE
+    assert 1 <= probed.keyframe_count <= 12
+
+    ingested = service.ingest(
+        str(animation),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.AUTO,
+        max_duration_s=30,
+    )
+
+    assert ingested.has_audio is False
+    assert ingested.has_transcript is False
+    assert ingested.visual_coverage is VisualCoverage.FULL
+    assert ingested.keyframe_count >= 3
+    assert any("no audio stream" in warning for warning in ingested.warnings)
+    shown = service.search(
+        "BRAVO",
+        video_id=ingested.video_id,
+        channel=SearchChannel.SHOWN,
+        limit=3,
+    )
+    assert shown.hits
+    frame = service.get_frame(ingested.video_id, t=1.5, region=FrameRegion.FULL)
+    assert frame.mime_type == "image/jpeg"
+    assert 0 < len(frame.image_data) <= MAX_IMAGE_BYTES
+
+    cached = service.ingest(
+        str(animation),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.AUTO,
+        max_duration_s=30,
+    )
+    assert cached.cache_hit is True
+    assert cached.video_id == ingested.video_id
+    assert animation.is_file()
 
 
 def test_fixture_generator_refuses_an_implicit_overwrite(tmp_path: Path) -> None:

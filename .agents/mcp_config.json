@@ -11,7 +11,10 @@
         "--transport",
         "stdio"
       ],
-      "cwd": "."
+      "cwd": ".",
+      "env": {
+        "KEYFRAME_ALLOW_TEMP_UPLOADS": "true"
+      }
     }
   }
 }

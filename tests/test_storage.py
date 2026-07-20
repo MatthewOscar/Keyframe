@@ -38,6 +38,7 @@ def sample_video() -> VideoRecord:
         duration_s=10,
         chapters=(Chapter(start_s=0, end_s=10, title="Demo"),),
         has_transcript=True,
+        has_audio=True,
         indexed_mode=IngestMode.FULL,
         visual_coverage=VisualCoverage.FULL,
         keyframe_count=1,
@@ -96,6 +97,67 @@ def test_round_trip_and_unified_search(store: KeyframeStore) -> None:
     )
     assert not said_more and said[0].segment_id == sample_segment().segment_id
     assert not shown_more and shown[0].moment_id == sample_moment().moment_id
+
+
+def test_search_broadens_only_when_all_terms_have_no_scoped_match(
+    store: KeyframeStore,
+) -> None:
+    second_segment = sample_segment().model_copy(
+        update={
+            "segment_id": "file_deadbeef:s:1",
+            "start_s": 5,
+            "end_s": 6,
+            "text": "absentword appears elsewhere",
+        }
+    )
+    store.save_video(sample_video(), [sample_segment(), second_segment], [sample_moment()])
+
+    broad, _ = store.search(
+        "multiple absentword",
+        video_id=sample_video().video_id,
+        channel=SearchChannel.SAID,
+        offset=0,
+        limit=10,
+    )
+    strict, _ = store.search(
+        "multiple exception",
+        video_id=sample_video().video_id,
+        channel=SearchChannel.SAID,
+        offset=0,
+        limit=10,
+    )
+    wrong_channel, _ = store.search(
+        "multiple absentword",
+        video_id=sample_video().video_id,
+        channel=SearchChannel.SHOWN,
+        offset=0,
+        limit=10,
+    )
+
+    assert {hit.segment_id for hit in broad} == {
+        sample_segment().segment_id,
+        second_segment.segment_id,
+    }
+    assert strict[0].segment_id == sample_segment().segment_id
+    assert wrong_channel == []
+
+    first_page, has_more = store.search(
+        "multiple absentword",
+        video_id=sample_video().video_id,
+        channel=SearchChannel.SAID,
+        offset=0,
+        limit=1,
+    )
+    second_page, second_has_more = store.search(
+        "multiple absentword",
+        video_id=sample_video().video_id,
+        channel=SearchChannel.SAID,
+        offset=1,
+        limit=1,
+    )
+    assert has_more is True
+    assert second_has_more is False
+    assert first_page[0].segment_id != second_page[0].segment_id
 
 
 @pytest.mark.parametrize(
@@ -198,8 +260,63 @@ def test_v3_migration_maps_legacy_visual_coverage_honestly_and_is_idempotent(
         ).fetchone()
         columns = [row[1] for row in connection.execute("PRAGMA table_info(videos)")]
 
-    assert version == ("4",)
+    assert version == ("5",)
     assert columns.count("visual_coverage") == 1
+    assert columns.count("has_audio") == 1
+
+
+def test_v4_migration_defaults_legacy_audio_capability_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "legacy-v4.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO metadata(key, value) VALUES('schema_version', '4');
+            CREATE TABLE videos (
+                video_id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                availability TEXT NOT NULL,
+                source_fingerprint TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                duration_s REAL NOT NULL,
+                chapters_json TEXT NOT NULL,
+                has_transcript INTEGER NOT NULL,
+                transcript_mode TEXT NOT NULL,
+                indexed_mode TEXT NOT NULL,
+                visual_coverage TEXT NOT NULL,
+                keyframe_count INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                warnings_json TEXT NOT NULL,
+                local_source_path TEXT,
+                local_source_size INTEGER,
+                local_source_mtime_ns INTEGER,
+                pipeline_version TEXT NOT NULL
+            );
+            INSERT INTO videos VALUES(
+                'legacy', '/tmp/legacy.mp4', 'local', 'local', 'legacy-fingerprint',
+                'Legacy', 2, '[]', 0, 'auto', 'fast', 'probe', 1, 'ready', '[]',
+                NULL, NULL, NULL, '2'
+            );
+            """
+        )
+
+    store = KeyframeStore(database_path)
+    store.initialize()
+    store.initialize()
+
+    video = store.get_video("legacy")
+    assert video is not None
+    assert video.has_audio is True
+    with sqlite3.connect(database_path) as connection:
+        version = connection.execute(
+            "SELECT value FROM metadata WHERE key = 'schema_version'"
+        ).fetchone()
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(videos)")]
+    assert version == ("5",)
+    assert columns.count("has_audio") == 1
 
 
 def test_save_replaces_old_fts_entries(store: KeyframeStore) -> None:

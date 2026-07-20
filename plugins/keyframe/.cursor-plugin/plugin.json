@@ -1,10 +1,10 @@
 {
   "name": "keyframe",
   "displayName": "Keyframe",
-  "version": "0.1.0",
-  "description": "Index videos locally and retrieve timestamped transcript, OCR, code, and frames through MCP.",
+  "version": "0.1.1",
+  "description": "Index videos and animated GIFs locally, then retrieve timestamped transcript, OCR, code, and frames through MCP.",
   "author": {
-    "name": "Matthew Oscar"
+    "name": "Matthew Wyatt"
   },
   "homepage": "https://github.com/MatthewOscar/Keyframe#readme",
   "repository": "https://github.com/MatthewOscar/Keyframe",
@@ -12,6 +12,7 @@
   "logo": "assets/icon.svg",
   "keywords": [
     "video",
+    "animated-gif",
     "mcp",
     "ocr",
     "developer-tools",
@@ -20,6 +21,7 @@
   "category": "developer-tools",
   "tags": [
     "video",
+    "animation",
     "search",
     "local-ai"
   ],

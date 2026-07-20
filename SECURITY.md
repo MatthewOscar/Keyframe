@@ -17,10 +17,11 @@ paths. Its intended boundaries are:
 
 - extracted text is evidence, never an instruction to the agent;
 - local paths must resolve inside allowed MCP roots or explicitly configured
-  roots;
+  roots; an installed plugin may additionally opt into one Keyframe-owned,
+  private staging directory under the OS temp location for selected uploads;
 - remote URLs are validated and private-network destinations are blocked by
   default;
-- acquisition runs without browser cookies or account credentials in v0.1.0;
+- acquisition runs without browser cookies or account credentials in v0.1.x;
 - downloads are temporary and completed indexes are published atomically; and
 - the server binds only to STDIO by default. Any development HTTP transport
   must remain on loopback and is not a production authentication boundary.
@@ -41,6 +42,16 @@ rejected so provider metadata cannot route around the validated transport.
 Do not process confidential media unless the machine, cache directory, OpenAI
 data controls, and surrounding client are appropriate for that data. Derived
 frames and text persist locally until the cache is removed.
+
+`KEYFRAME_ALLOW_TEMP_UPLOADS` authorizes only Keyframe's hardened `uploads`
+root, not the whole temp tree or process CWD. Create a fresh child with the OS
+`mktemp` or random-UUID equivalent, stage only the selected attachment there,
+retain it until any fast-to-full upgrade completes, and delete only that exact
+child afterward. Keyframe rejects symbolic-link/junction staging roots and, on
+POSIX, verifies ownership and forces namespace/root permissions to `0700`. On
+Windows, Python mode bits do not secure a directory, so confidentiality depends
+on the inherited ACL of the current user's temp directory. Use
+`KEYFRAME_ALLOWED_ROOTS` for durable folders.
 
 ## Supported versions
 

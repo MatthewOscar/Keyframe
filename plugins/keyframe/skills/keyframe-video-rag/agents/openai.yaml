@@ -1,4 +1,4 @@
 interface:
   display_name: "Keyframe Video RAG"
-  short_description: "Retrieve timestamped context from videos"
-  default_prompt: "Use $keyframe-video-rag to understand this video and cite the relevant timestamps."
+  short_description: "Retrieve timestamped video and GIF context"
+  default_prompt: "Use $keyframe-video-rag to understand this video or animated GIF and cite the relevant timestamps."

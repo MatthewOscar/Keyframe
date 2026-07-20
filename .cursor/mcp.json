@@ -11,7 +11,10 @@
         "serve",
         "--transport",
         "stdio"
-      ]
+      ],
+      "env": {
+        "KEYFRAME_ALLOW_TEMP_UPLOADS": "true"
+      }
     }
   }
 }
