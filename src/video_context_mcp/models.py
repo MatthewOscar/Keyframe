@@ -106,6 +106,57 @@ class VideoRecord(StrictModel):
     pipeline_version: str
 
 
+class IngestTimings(StrictModel):
+    """Request-local ingest timings; concurrent stages must not be summed."""
+
+    total_ms: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Total service wall time. This is authoritative because component stages may "
+                "overlap and do not partition the total."
+            ),
+        ),
+    ]
+    cache_lookup_ms: Annotated[
+        int,
+        Field(ge=0, description="Cumulative cache lookup and reuse-validation wall time."),
+    ]
+    acquisition_ms: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Source acquisition, hashing, metadata, and caption wall time; null when skipped.",
+        ),
+    ]
+    transcription_ms: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Local Whisper wall time; null when captions were used or speech was skipped.",
+        ),
+    ]
+    visual_ms: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Visual sampling, OCR, encoding, and artifact-publication wall time; null when reused.",
+        ),
+    ]
+    index_commit_ms: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="SQLite index commit wall time; null when no index write occurred.",
+        ),
+    ]
+
+
 class IngestResult(StrictModel):
     video_id: str
     title: str
@@ -123,12 +174,22 @@ class IngestResult(StrictModel):
     warnings: tuple[str, ...] = ()
     cache_hit: bool
     pipeline_version: str = PIPELINE_VERSION
+    timings: IngestTimings | None = Field(
+        default=None,
+        description="Request-local timings; absent only for backward-compatible constructed results.",
+    )
 
 
 class TranscriptPage(StrictModel):
     video_id: str
     segments: tuple[TranscriptSegment, ...]
-    next_cursor: str | None = None
+    next_cursor: str | None = Field(
+        default=None,
+        description=(
+            "Opaque continuation token. Copy it byte-for-byte into the immediately following "
+            "request and keep that query's scope-defining arguments unchanged."
+        ),
+    )
     has_more: bool = False
 
 
@@ -149,7 +210,13 @@ class MomentPage(StrictModel):
     video_id: str
     moments: tuple[MomentSummary, ...]
     visual_coverage: VisualCoverage = VisualCoverage.NONE
-    next_cursor: str | None = None
+    next_cursor: str | None = Field(
+        default=None,
+        description=(
+            "Opaque continuation token. Copy it byte-for-byte into the immediately following "
+            "request and keep that query's scope-defining arguments unchanged."
+        ),
+    )
     has_more: bool = False
 
 
@@ -168,7 +235,13 @@ class SearchPage(StrictModel):
     query: str
     hits: tuple[SearchHit, ...]
     visual_coverage: VisualCoverage | None = None
-    next_cursor: str | None = None
+    next_cursor: str | None = Field(
+        default=None,
+        description=(
+            "Opaque continuation token. Copy it byte-for-byte into the immediately following "
+            "request and keep that query's scope-defining arguments unchanged."
+        ),
+    )
     has_more: bool = False
 
 

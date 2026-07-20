@@ -19,7 +19,7 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 
 - [ ] Review the complete diff and merge the verified release branch.
 - [x] Create and push immutable tag `v0.1.0`.
-- [ ] Create and push the verified attachment/GIF fix tag `v0.1.1`.
+- [ ] Create and push the verified long-video reliability tag `v0.1.2`.
 - [ ] Create the free PyPI project/Trusted Publisher and confirm the workflow,
       or retain the exact Git-tag launcher already bundled in the plugin.
 - [ ] Install the tagged plugin in Codex and ChatGPT desktop and run the

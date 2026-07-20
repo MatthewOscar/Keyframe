@@ -21,6 +21,16 @@ on the returned coverage, `has_audio`, and transcript availability. Immediately 
 12 moment summaries; this does not load images. A probe miss is not evidence
 that something was absent.
 
+The default 1,800-second value is an explicit resource guard, not a format
+limit. If Keyframe reports a longer duration and supplies an exact
+`max_duration_s` value at or below 14,400, retry once with the same source and
+options, changing only that value. Do not split or restage the source. Ask the
+user for a shorter excerpt when the four-hour hard maximum is exceeded.
+
+Successful ingests include request-local `timings`. `total_ms` is authoritative;
+transcription and visual processing may overlap, so component values must not
+be summed. A null component means that stage was skipped or reused.
+
 Repeat with `"mode": "full"` for code or terminal sequences, diagram topology,
 UI state changes, probe gaps, uncertain or contradictory OCR, and negative
 visual claims. A single relevant probe image can settle one targeted visual
@@ -42,10 +52,23 @@ Static GIFs should be supplied as ordinary images.
 }
 ```
 
-If `has_more` is true, send the returned `next_cursor` with the same video and
-time bounds. Cursors are valid only while that cached index is unchanged; after
-any refresh or re-ingestion, discard outstanding cursors and start again from
-the first page.
+If `has_more` is true, copy the returned `next_cursor` byte-for-byte into the
+immediately following call with the same video and time bounds. Never decode,
+shorten, retype, or reconstruct a cursor. If one is rejected, discard it and
+restart that exact query once with the cursor omitted. Cursors are valid only
+while that cached index is unchanged; after any refresh or re-ingestion,
+discard outstanding cursors and start again from the first page. Search cursors
+also require the same query, video, and channel; moment cursors require the same
+video and kind. Page limits may change because they are not part of cursor scope.
+
+## Summarize a whole video efficiently
+
+Use one fast ingest, one `video_list_moments` request with `kind="any"` and
+`limit=12`, then `video_get_transcript` with `limit=200` and no time bounds.
+Follow `next_cursor` only while `has_more=true`, and inspect at most four frames
+for consequential visual claims. Skip generic searches; reserve `video_search`
+for targeted questions. If a full upgrade is necessary, list moments once for
+that new index generation because prior moment IDs and cursors are invalid.
 
 ## Search spoken and visual evidence separately
 

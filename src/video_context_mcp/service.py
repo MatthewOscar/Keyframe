@@ -10,10 +10,11 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -53,6 +54,7 @@ from video_context_mcp.models import (
     FrameResult,
     IngestMode,
     IngestResult,
+    IngestTimings,
     MomentKind,
     MomentPage,
     MomentSummary,
@@ -100,6 +102,45 @@ class VisualPayload[T: BaseModel]:
     mime_type: str
 
 
+@dataclass(slots=True)
+class _IngestTimingRecorder:
+    """Collect request-local wall times without persisting them in the video cache."""
+
+    started_s: float
+    cache_lookup_s: float = 0.0
+    acquisition_s: float | None = None
+    transcription_s: float | None = None
+    visual_s: float | None = None
+    index_commit_s: float | None = None
+
+    @classmethod
+    def start(cls) -> _IngestTimingRecorder:
+        return cls(started_s=time.perf_counter())
+
+    @contextmanager
+    def measure(self, stage: str) -> Iterator[None]:
+        started_s = time.perf_counter()
+        try:
+            yield
+        finally:
+            elapsed_s = time.perf_counter() - started_s
+            current = getattr(self, stage)
+            setattr(self, stage, elapsed_s if current is None else current + elapsed_s)
+
+    def snapshot(self) -> IngestTimings:
+        def milliseconds(value: float | None) -> int | None:
+            return None if value is None else max(0, round(value * 1_000))
+
+        return IngestTimings(
+            total_ms=max(0, round((time.perf_counter() - self.started_s) * 1_000)),
+            cache_lookup_ms=max(0, round(self.cache_lookup_s * 1_000)),
+            acquisition_ms=milliseconds(self.acquisition_s),
+            transcription_ms=milliseconds(self.transcription_s),
+            visual_ms=milliseconds(self.visual_s),
+            index_commit_ms=milliseconds(self.index_commit_s),
+        )
+
+
 class KeyframeService:
     """Synchronous local video-index service used by both supported transports."""
 
@@ -145,6 +186,7 @@ class KeyframeService:
     ) -> IngestResult:
         """Build or reuse a complete cache entry for one video."""
 
+        timings = _IngestTimingRecorder.start()
         try:
             selected_mode = IngestMode(mode)
             selected_transcript_mode = TranscriptMode(transcript_mode)
@@ -164,15 +206,21 @@ class KeyframeService:
         normalized_source = self._normalize_source(source, request_settings)
         self._notify(progress, 2, "Validated video source")
         if not refresh:
-            cached = self.store.find_by_source(normalized_source, pipeline_version=PIPELINE_VERSION)
-            if (
-                cached is not None
-                and cached.duration_s <= max_duration_s
-                and self._cache_satisfies(cached, selected_mode, selected_transcript_mode)
-                and self._cache_source_is_current(cached)
-            ):
+            with timings.measure("cache_lookup_s"):
+                cached = self.store.find_by_source(
+                    normalized_source, pipeline_version=PIPELINE_VERSION
+                )
+                cached_is_ready = (
+                    cached is not None
+                    and cached.duration_s <= max_duration_s
+                    and self._cache_satisfies(cached, selected_mode, selected_transcript_mode)
+                    and self._cache_source_is_current(cached)
+                )
+            if cached_is_ready:
+                assert cached is not None
                 self._notify(progress, 100, "Using cached video index")
-                return self._ingest_result(cached, cache_hit=True)
+                cached_result = self._ingest_result(cached, cache_hit=True)
+                return cached_result.model_copy(update={"timings": timings.snapshot()})
 
         lock_key = hashlib.sha256(normalized_source.encode("utf-8")).hexdigest()
         lock = FileLock(str(self._locks_dir / f"{lock_key}.lock"))
@@ -181,26 +229,35 @@ class KeyframeService:
                 self._global_ingest_lock.acquire(timeout=max_duration_s + 300),
                 lock.acquire(timeout=max_duration_s + 300),
             ):
+                locked_result: IngestResult | None = None
                 if not refresh:
-                    cached = self.store.find_by_source(
-                        normalized_source, pipeline_version=PIPELINE_VERSION
+                    with timings.measure("cache_lookup_s"):
+                        cached = self.store.find_by_source(
+                            normalized_source, pipeline_version=PIPELINE_VERSION
+                        )
+                        cached_is_ready = (
+                            cached is not None
+                            and cached.duration_s <= max_duration_s
+                            and self._cache_satisfies(
+                                cached, selected_mode, selected_transcript_mode
+                            )
+                            and self._cache_source_is_current(cached)
+                        )
+                    if cached_is_ready:
+                        assert cached is not None
+                        locked_result = self._ingest_result(cached, cache_hit=True)
+                if locked_result is None:
+                    locked_result = self._ingest_locked(
+                        normalized_source,
+                        mode=selected_mode,
+                        transcript_mode=selected_transcript_mode,
+                        max_duration_s=max_duration_s,
+                        refresh=refresh,
+                        progress=progress,
+                        request_settings=request_settings,
+                        timings=timings,
                     )
-                    if (
-                        cached is not None
-                        and cached.duration_s <= max_duration_s
-                        and self._cache_satisfies(cached, selected_mode, selected_transcript_mode)
-                        and self._cache_source_is_current(cached)
-                    ):
-                        return self._ingest_result(cached, cache_hit=True)
-                return self._ingest_locked(
-                    normalized_source,
-                    mode=selected_mode,
-                    transcript_mode=selected_transcript_mode,
-                    max_duration_s=max_duration_s,
-                    refresh=refresh,
-                    progress=progress,
-                    request_settings=request_settings,
-                )
+            return locked_result.model_copy(update={"timings": timings.snapshot()})
         except Timeout as exc:
             raise CacheError(
                 "Another process is still ingesting this source. Wait for it to finish and retry."
@@ -216,16 +273,18 @@ class KeyframeService:
         refresh: bool,
         progress: ProgressCallback | None,
         request_settings: Settings,
+        timings: _IngestTimingRecorder,
     ) -> IngestResult:
         self._notify(progress, 8, "Inspecting video metadata and captions")
-        acquired = self._acquire(
-            source,
-            request_settings,
-            mode=mode.value,
-            transcript_mode=transcript_mode.value,
-            max_duration_s=max_duration_s,
-            refresh=refresh,
-        )
+        with timings.measure("acquisition_s"):
+            acquired = self._acquire(
+                source,
+                request_settings,
+                mode=mode.value,
+                transcript_mode=transcript_mode.value,
+                max_duration_s=max_duration_s,
+                refresh=refresh,
+            )
         extra_warnings: list[str] = []
         try:
             should_whisper = (
@@ -235,24 +294,28 @@ class KeyframeService:
             )
             if should_whisper and self._has_whisper() and acquired.media_path is None:
                 acquired.cleanup()
-                acquired = self._acquire(
-                    source,
-                    request_settings,
-                    mode=mode.value,
-                    transcript_mode=TranscriptMode.WHISPER.value,
-                    max_duration_s=max_duration_s,
-                    refresh=refresh,
-                )
+                with timings.measure("acquisition_s"):
+                    acquired = self._acquire(
+                        source,
+                        request_settings,
+                        mode=mode.value,
+                        transcript_mode=TranscriptMode.WHISPER.value,
+                        max_duration_s=max_duration_s,
+                        refresh=refresh,
+                    )
                 extra_warnings.append("No captions were available; used local Whisper fallback.")
 
             fingerprint = self._fingerprint(acquired)
             video_id = self._video_id(acquired)
-            existing = self.store.find_by_fingerprint(fingerprint)
-            if (
-                existing is not None
-                and not refresh
-                and self._cache_satisfies(existing, mode, transcript_mode)
-            ):
+            with timings.measure("cache_lookup_s"):
+                existing = self.store.find_by_fingerprint(fingerprint)
+                existing_is_ready = (
+                    existing is not None
+                    and not refresh
+                    and self._cache_satisfies(existing, mode, transcript_mode)
+                )
+            if existing_is_ready:
+                assert existing is not None
                 if acquired.metadata.kind is SourceKind.LOCAL:
                     existing = existing.model_copy(
                         update={
@@ -262,11 +325,15 @@ class KeyframeService:
                             "local_source_mtime_ns": acquired.metadata.content_mtime_ns,
                         }
                     )
-                    self.store.save_video(
-                        existing,
-                        self.store.segments_for_video(existing.video_id),
-                        self.store.moments_for_video(existing.video_id),
-                    )
+                    with timings.measure("cache_lookup_s"):
+                        existing_segments = self.store.segments_for_video(existing.video_id)
+                        existing_moments = self.store.moments_for_video(existing.video_id)
+                    with timings.measure("index_commit_s"):
+                        self.store.save_video(
+                            existing,
+                            existing_segments,
+                            existing_moments,
+                        )
                 return self._ingest_result(existing, cache_hit=True)
 
             transcript_source: Sequence[AcquiredTranscriptSegment] = acquired.transcript
@@ -303,10 +370,11 @@ class KeyframeService:
             published_run: Path | None = None
             visuals_rebuilt = False
             try:
-                stored_prior = self.store.get_video(video_id)
-                prior_moments = (
-                    self.store.moments_for_video(video_id) if stored_prior is not None else []
-                )
+                with timings.measure("cache_lookup_s"):
+                    stored_prior = self.store.get_video(video_id)
+                    prior_moments = (
+                        self.store.moments_for_video(video_id) if stored_prior is not None else []
+                    )
                 reusable_prior = (
                     stored_prior
                     if stored_prior is not None
@@ -349,14 +417,15 @@ class KeyframeService:
 
                     def extract_selected_visuals() -> tuple[list[VisualMoment], Path | None]:
                         try:
-                            return self._extract_and_publish(
-                                video_id,
-                                visual_media_path,
-                                media_duration_s=acquired.metadata.duration_s,
-                                coverage=visual_coverage,
-                                probe_plan=probe_plan,
-                                progress=progress,
-                            )
+                            with timings.measure("visual_s"):
+                                return self._extract_and_publish(
+                                    video_id,
+                                    visual_media_path,
+                                    media_duration_s=acquired.metadata.duration_s,
+                                    coverage=visual_coverage,
+                                    probe_plan=probe_plan,
+                                    progress=progress,
+                                )
                         except OSError as exc:
                             raise ExtractionError(
                                 "Could not process or stage visual artifacts. Check free disk "
@@ -366,15 +435,19 @@ class KeyframeService:
 
                     if needs_whisper:
                         self._notify(progress, 20, "Transcribing speech locally with Whisper")
+
+                        def transcribe_selected_audio() -> tuple[AcquiredTranscriptSegment, ...]:
+                            with timings.measure("transcription_s"):
+                                return self._transcribe(
+                                    visual_media_path,
+                                    timeout_s=whisper_timeout_s,
+                                )
+
                         with ThreadPoolExecutor(
                             max_workers=1,
                             thread_name_prefix="keyframe-whisper",
                         ) as executor:
-                            transcript_future = executor.submit(
-                                self._transcribe,
-                                visual_media_path,
-                                timeout_s=whisper_timeout_s,
-                            )
+                            transcript_future = executor.submit(transcribe_selected_audio)
                             self._notify(progress, 30, visual_message)
                             moments, published_run = extract_selected_visuals()
                             transcript_source = transcript_future.result()
@@ -400,13 +473,14 @@ class KeyframeService:
                                 "none."
                             )
                         self._notify(progress, 20, "Transcribing speech locally with Whisper")
-                        transcript_source = self._transcribe(
-                            acquired.media_path,
-                            progress=lambda value, message: self._notify(
-                                progress, 20 + value * 0.1, message
-                            ),
-                            timeout_s=whisper_timeout_s,
-                        )
+                        with timings.measure("transcription_s"):
+                            transcript_source = self._transcribe(
+                                acquired.media_path,
+                                progress=lambda value, message: self._notify(
+                                    progress, 20 + value * 0.1, message
+                                ),
+                                timeout_s=whisper_timeout_s,
+                            )
 
                 if (
                     needs_whisper
@@ -457,7 +531,8 @@ class KeyframeService:
                     pipeline_version=PIPELINE_VERSION,
                 )
                 self._notify(progress, 92, "Committing the local index")
-                self.store.save_video(video, segments, moments)
+                with timings.measure("index_commit_s"):
+                    self.store.save_video(video, segments, moments)
             except BaseException:
                 if published_run is not None and not self._artifact_run_is_referenced(
                     published_run
@@ -1052,7 +1127,11 @@ class KeyframeService:
         )
 
     @staticmethod
-    def _ingest_result(video: VideoRecord, *, cache_hit: bool) -> IngestResult:
+    def _ingest_result(
+        video: VideoRecord,
+        *,
+        cache_hit: bool,
+    ) -> IngestResult:
         return IngestResult(
             video_id=video.video_id,
             title=video.title,

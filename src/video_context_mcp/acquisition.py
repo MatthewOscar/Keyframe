@@ -195,6 +195,34 @@ def _effective_duration_limit(settings: Settings, requested: int | None) -> int:
     return limit
 
 
+def _duration_limit_error(
+    duration_s: float,
+    configured_limit_s: int,
+    *,
+    downloaded: bool = False,
+) -> SourceError:
+    """Explain the one safe retry without encouraging agents to split media."""
+
+    required_limit_s = math.ceil(duration_s)
+    label = "Downloaded video" if downloaded else "Video"
+    prefix = (
+        f"{label} duration is {duration_s:.1f}s, above the configured "
+        f"{configured_limit_s}s limit."
+    )
+    if required_limit_s <= MAX_CONFIGURABLE_DURATION_S:
+        return SourceError(
+            f"{prefix} Retry video_ingest once with the exact same source and options, "
+            f"changing only max_duration_s={required_limit_s}. Do not split or restage the "
+            "source."
+        )
+    return SourceError(
+        f"{label} duration is {duration_s:.1f}s, above Keyframe's "
+        f"{MAX_CONFIGURABLE_DURATION_S}s (4-hour) maximum. Do not retry with a larger "
+        "max_duration_s or split the source automatically. Ask the user to provide a shorter "
+        "excerpt."
+    )
+
+
 def _temp_upload_hint(settings: Settings) -> str:
     if not settings.allow_temp_uploads:
         return ""
@@ -716,9 +744,7 @@ def acquire_local(
             )
         raise SourceError(f"Could not determine a positive duration for {path}.")
     if duration > limit:
-        raise SourceError(
-            f"Video duration is {duration:.1f}s, above the configured {limit}s limit."
-        )
+        raise _duration_limit_error(duration, limit)
 
     tags = cast(
         Mapping[str, Any],
@@ -1248,9 +1274,7 @@ def _validate_remote_info(
     if duration is None or duration <= 0:
         raise SourceError("yt-dlp could not determine a positive video duration.")
     if duration > max_duration_s:
-        raise SourceError(
-            f"Video duration is {duration:.1f}s, above the configured {max_duration_s}s limit."
-        )
+        raise _duration_limit_error(duration, max_duration_s)
     size = _as_int(info.get("filesize")) or _as_int(info.get("filesize_approx"))
     if size is not None and size > settings.max_remote_file_bytes:
         raise SourceError(
@@ -1570,10 +1594,7 @@ def _probe_downloaded_media(
     if duration <= 0:
         raise SourceError("ffprobe could not determine a positive downloaded-media duration.")
     if duration > max_duration_s + 1:
-        raise SourceError(
-            f"Downloaded video duration is {duration:.1f}s, above the configured "
-            f"{max_duration_s}s limit."
-        )
+        raise _duration_limit_error(duration, max_duration_s, downloaded=True)
     return any(item.get("codec_type") == "audio" for item in streams)
 
 

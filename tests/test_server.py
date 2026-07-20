@@ -15,6 +15,7 @@ from video_context_mcp.models import (
     FrameResult,
     IngestMode,
     IngestResult,
+    IngestTimings,
     MomentKind,
     MomentPage,
     SearchChannel,
@@ -38,6 +39,13 @@ class FakeService:
             indexed_mode=IngestMode.FAST,
             status="ready",
             cache_hit=False,
+            timings=IngestTimings(
+                total_ms=12,
+                cache_lookup_ms=1,
+                acquisition_ms=4,
+                visual_ms=7,
+                index_commit_ms=1,
+            ),
         )
 
     def get_transcript(self, video_id: str, **kwargs: object) -> TranscriptPage:
@@ -141,6 +149,21 @@ class NonFiniteVisualService(FakeService):
         )
 
 
+class DurationGuardService(FakeService):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def ingest(self, source: str, **kwargs: object) -> IngestResult:
+        self.calls.append((source, kwargs))
+        if kwargs["max_duration_s"] == 1_800:
+            raise SourceError(
+                "Video duration is 2215.1s, above the configured 1800s limit. Retry "
+                "video_ingest once with the exact same source and options, changing only "
+                "max_duration_s=2216. Do not split or restage the source."
+            )
+        return super().ingest(source, **kwargs)
+
+
 def test_exact_tool_surface_and_annotations() -> None:
     server = create_server(FakeService())
     tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
@@ -157,6 +180,61 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert tools["video_search"].annotations is not None
     assert tools["video_search"].annotations.readOnlyHint is True
     assert tools["video_get_code"].output_schema is not None
+
+    ingest_schema = tools["video_ingest"].parameters["properties"]["max_duration_s"]
+    assert ingest_schema["default"] == 1_800
+    assert ingest_schema["maximum"] == 14_400
+    for name in ("video_get_transcript", "video_search", "video_list_moments"):
+        cursor_schema = tools[name].parameters["properties"]["cursor"]
+        assert "byte-for-byte" in cursor_schema["description"]
+        assert tools[name].output_schema is not None
+        output_cursor = tools[name].output_schema["properties"]["next_cursor"]
+        assert "byte-for-byte" in output_cursor["description"]
+
+
+@pytest.mark.asyncio
+async def test_structured_ingest_result_reports_request_local_timings() -> None:
+    server = create_server(FakeService())
+    result = await server._tool_manager.call_tool(
+        "video_ingest", {"source": "/allowed/demo.mp4"}, convert_result=True
+    )
+    _unstructured, structured = result
+
+    assert structured["timings"] == {
+        "total_ms": 12,
+        "cache_lookup_ms": 1,
+        "acquisition_ms": 4,
+        "transcription_ms": None,
+        "visual_ms": 7,
+        "index_commit_ms": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_duration_guard_error_supports_one_same_source_retry() -> None:
+    service = DurationGuardService()
+    server = create_server(service)
+    source = "/authorized/long meeting.mp4"
+    original = {
+        "source": source,
+        "mode": "fast",
+        "transcript_mode": "auto",
+        "max_duration_s": 1_800,
+        "refresh": False,
+    }
+
+    with pytest.raises(ToolError, match="changing only max_duration_s=2216"):
+        await server._tool_manager.call_tool("video_ingest", original, convert_result=True)
+    retry = {**original, "max_duration_s": 2_216}
+    await server._tool_manager.call_tool("video_ingest", retry, convert_result=True)
+
+    assert [call[0] for call in service.calls] == [source, source]
+    first_options = service.calls[0][1]
+    second_options = service.calls[1][1]
+    for key in ("mode", "transcript_mode", "refresh", "client_roots"):
+        assert first_options[key] == second_options[key]
+    assert first_options["max_duration_s"] == 1_800
+    assert second_options["max_duration_s"] == 2_216
 
 
 @pytest.mark.asyncio
@@ -204,6 +282,11 @@ def test_models_reject_non_finite_numbers_globally(non_finite: float) -> None:
             snippet="python",
             score=non_finite,
         )
+
+
+def test_ingest_timings_reject_negative_durations() -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        IngestTimings(total_ms=-1, cache_lookup_ms=0)
 
 
 @pytest.mark.asyncio

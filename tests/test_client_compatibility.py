@@ -209,6 +209,12 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "Use when a coding agent must understand" in contents[0]
     assert "Use when Codex must understand" not in contents[0]
     assert "For each source, make at most one successful fast ingest" in contents[0]
+    assert "Do not split, restage, or reconstruct the source" in contents[0]
+    assert "Skip generic search for a whole-video summary" in contents[0]
+    assert "`limit=200` and no time bounds" in contents[0]
+    assert "Copy it byte-for-byte" in contents[0]
     server_source = (ROOT / "src/video_context_mcp/server.py").read_text(encoding="utf-8")
     assert "Ingest each source with mode='fast' once" in server_source
     assert "one mode='full' upgrade per source" in server_source
+    assert "do not split or restage it" in server_source
+    assert "copy it byte-for-byte" in server_source

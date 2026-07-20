@@ -452,8 +452,33 @@ def test_local_acquisition_enforces_duration_before_pipeline(
     )
     monkeypatch.setattr(acquisition.subprocess, "run", lambda *_args, **_kwargs: completed)
 
-    with pytest.raises(SourceError, match="above"):
+    with pytest.raises(SourceError) as raised:
         acquire_local(video, settings, max_duration_s=300)
+
+    assert str(raised.value) == (
+        "Video duration is 301.0s, above the configured 300s limit. "
+        "Retry video_ingest once with the exact same source and options, changing only "
+        "max_duration_s=301. Do not split or restage the source."
+    )
+
+
+@pytest.mark.parametrize(
+    ("duration_s", "expected"),
+    [
+        (14_399.1, "max_duration_s=14400"),
+        (14_400.1, "above Keyframe's 14400s (4-hour) maximum"),
+    ],
+)
+def test_duration_limit_error_distinguishes_retry_from_hard_stop(
+    duration_s: float,
+    expected: str,
+) -> None:
+    message = str(acquisition._duration_limit_error(duration_s, 1_800))
+
+    assert expected in message
+    if duration_s > 14_400:
+        assert "max_duration_s=14401" not in message
+        assert "shorter excerpt" in message
 
 
 def _remote_info(**updates: Any) -> dict[str, Any]:
@@ -695,6 +720,31 @@ def test_downloaded_media_probe_returns_audio_stream_presence(
     assert (
         acquisition._probe_downloaded_media(media, settings, max_duration_s=60) is has_audio
     )
+
+
+def test_downloaded_media_probe_keeps_duration_drift_tolerance_then_guides_retry(
+    tmp_path: Path,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media = tmp_path / "downloaded.mp4"
+    media.write_bytes(b"downloaded media")
+
+    monkeypatch.setattr(
+        acquisition,
+        "_run_json_command",
+        lambda *_args, **_kwargs: _probe_document(duration="61", audio=True),
+    )
+    assert acquisition._probe_downloaded_media(media, settings, max_duration_s=60) is True
+
+    monkeypatch.setattr(
+        acquisition,
+        "_run_json_command",
+        lambda *_args, **_kwargs: _probe_document(duration="61.1", audio=True),
+    )
+    with pytest.raises(SourceError, match="changing only max_duration_s=62") as raised:
+        acquisition._probe_downloaded_media(media, settings, max_duration_s=60)
+    assert "Do not split or restage the source" in str(raised.value)
 
 
 def test_auto_transcript_falls_back_when_manual_caption_download_fails(

@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.1.1",
-  "description": "Supplementary regressions for attachment staging, honest Keyframe provenance, warm-cache latency, and animated GIFs.",
+  "suite": "keyframe-mac-plugin-v0.1.2",
+  "description": "Supplementary regressions for attachment staging, long-video retries, honest Keyframe provenance, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
       "agent_total_wall_time_s",
@@ -13,6 +13,7 @@
   },
   "variables": {
     "LOCAL_VIDEO": "A selected local recording with audio and no caption sidecar",
+    "LONG_LOCAL_VIDEO": "A selected local recording between 30 minutes and 4 hours with audio and no caption sidecar",
     "ANIMATED_GIF": "A first-party animated GIF with at least three visibly distinct states"
   },
   "cases": [
@@ -35,6 +36,18 @@
         "cache_hit=true",
         "The ingest tool completes in under one second",
         "No duplicate full upgrade or native media analysis occurs"
+      ]
+    },
+    {
+      "id": "desktop-long-video-summary",
+      "prompt": "Use Keyframe to summarize {{LONG_LOCAL_VIDEO}} as a timestamped whole-video timeline. Start with the default duration guard and follow any actionable retry without splitting or restaging the source.",
+      "success_criteria": [
+        "A duration error causes one same-source retry changing only max_duration_s to the exact suggested value",
+        "The source is not split and a staged attachment is not copied a second time",
+        "The successful fast ingest reports request-local stage timings",
+        "Exactly one 12-moment routing list is used for the fast index generation",
+        "Transcript pages use limit=200 and copy next_cursor byte-for-byte with unchanged scope",
+        "No generic video_search call is made for the whole-video summary"
       ]
     },
     {

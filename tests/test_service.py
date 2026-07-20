@@ -206,6 +206,17 @@ def test_local_cache_identity_reuses_unchanged_source_and_hashes_changed_file(
     assert cached.video_id == first.video_id
     assert cached.cache_hit is True
     assert len(calls) == 1
+    assert first.timings is not None
+    assert first.timings.acquisition_ms is not None
+    assert first.timings.visual_ms is not None
+    assert first.timings.index_commit_ms is not None
+    assert first.timings.transcription_ms is None
+    assert cached.timings is not None
+    assert cached.timings.acquisition_ms is None
+    assert cached.timings.visual_ms is None
+    assert cached.timings.index_commit_ms is None
+    assert cached.timings.transcription_ms is None
+    assert cached.timings.cache_lookup_ms <= cached.timings.total_ms
 
     source.write_bytes(b"second, materially different video revision")
     changed = service.ingest(
@@ -215,6 +226,39 @@ def test_local_cache_identity_reuses_unchanged_source_and_hashes_changed_file(
     assert changed.video_id != first.video_id
     assert changed.cache_hit is False
     assert len(calls) == 2
+
+
+def test_post_lock_cache_race_reports_only_lookup_timing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    service.ingest(str(source), transcript_mode=TranscriptMode.CAPTIONS)
+    original_find = service.store.find_by_source
+    lookups = 0
+
+    def find_after_lock(source_value: str, *, pipeline_version: str) -> VideoRecord | None:
+        nonlocal lookups
+        lookups += 1
+        if lookups == 1:
+            return None
+        return original_find(source_value, pipeline_version=pipeline_version)
+
+    monkeypatch.setattr(service.store, "find_by_source", find_after_lock)
+    raced = service.ingest(str(source), transcript_mode=TranscriptMode.CAPTIONS)
+
+    assert raced.cache_hit is True
+    assert len(calls) == 1
+    assert lookups == 2
+    assert raced.timings is not None
+    assert raced.timings.acquisition_ms is None
+    assert raced.timings.transcription_ms is None
+    assert raced.timings.visual_ms is None
+    assert raced.timings.index_commit_ms is None
+    assert raced.timings.cache_lookup_ms <= raced.timings.total_ms
 
 
 def test_visual_scratch_uses_os_temp_and_publication_stays_atomic(
@@ -320,9 +364,67 @@ def test_revalidated_same_content_updates_the_cheap_local_cache_guard(tmp_path: 
 
     assert revalidated.video_id == first.video_id
     assert revalidated.cache_hit is True
+    assert revalidated.timings is not None
+    assert revalidated.timings.acquisition_ms is not None
+    assert revalidated.timings.index_commit_ms is not None
+    assert revalidated.timings.transcription_ms is None
+    assert revalidated.timings.visual_ms is None
     assert cached.video_id == first.video_id
     assert cached.cache_hit is True
     assert len(calls) == 2
+
+
+def test_total_timing_includes_cleanup_after_remote_fingerprint_hit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    media = _source_file(source_root)
+    calls = 0
+    clock_s = 0.0
+
+    class DelayedCleanupSource(AcquiredSource):
+        def cleanup(self) -> None:
+            nonlocal clock_s
+            clock_s += 0.25
+            super().cleanup()
+
+    def acquire(source: str, _settings: Settings, **_kwargs: object) -> AcquiredSource:
+        nonlocal calls
+        calls += 1
+        source_type = DelayedCleanupSource if calls == 2 else AcquiredSource
+        return source_type(
+            metadata=SourceMetadata(
+                source=source,
+                kind=SourceKind.YOUTUBE,
+                video_id="same-provider-id",
+                title="Remote alias",
+                duration_s=10,
+                provider="youtube",
+            ),
+            transcript=(AcquiredTranscriptSegment(0, 1, "same remote evidence"),),
+            media_path=media,
+        )
+
+    service = _service(settings, acquire)
+    service.ingest(
+        "https://www.youtube.com/watch?v=first-alias",
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+    monkeypatch.setattr(service_module.time, "perf_counter", lambda: clock_s)
+
+    alias = service.ingest(
+        "https://youtu.be/same-provider-id",
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+
+    assert alias.cache_hit is True
+    assert alias.timings is not None
+    assert alias.timings.total_ms == 250
+    assert alias.timings.acquisition_ms == 0
+    assert alias.timings.visual_ms is None
+    assert alias.timings.transcription_ms is None
+    assert alias.timings.index_commit_ms is None
 
 
 def test_fast_refresh_preserves_a_previously_published_full_visual_index(tmp_path: Path) -> None:
@@ -472,7 +574,7 @@ def test_visual_cursor_is_rejected_after_probe_upgrades_to_full(tmp_path: Path) 
         str(source), mode=IngestMode.FULL, transcript_mode=TranscriptMode.CAPTIONS
     )
     assert full.visual_coverage is VisualCoverage.FULL
-    with pytest.raises(CursorError, match="does not belong"):
+    with pytest.raises(CursorError, match="does not match"):
         service.list_moments(full.video_id, cursor=probe_page.next_cursor, limit=1)
 
 
@@ -557,23 +659,75 @@ def test_page_cursors_are_bound_to_the_exact_query_scope(tmp_path: Path) -> None
 
     transcript = service.get_transcript(ingested.video_id, limit=1)
     assert transcript.next_cursor is not None
-    with pytest.raises(CursorError, match="does not belong"):
+    transcript_next = service.get_transcript(
+        ingested.video_id,
+        cursor=transcript.next_cursor,
+        limit=1,
+    )
+    assert transcript_next.segments[0].segment_id != transcript.segments[0].segment_id
+    with pytest.raises(CursorError, match="does not match"):
         service.get_transcript(
             ingested.video_id,
             start_s=0.5,
             cursor=transcript.next_cursor,
             limit=1,
         )
+    transcript_restart = service.get_transcript(ingested.video_id, limit=1)
+    assert transcript_restart.segments == transcript.segments
 
     moments = service.list_moments(ingested.video_id, kind=MomentKind.ANY, limit=1)
     assert moments.next_cursor is not None
-    with pytest.raises(CursorError, match="does not belong"):
+    moments_next = service.list_moments(
+        ingested.video_id,
+        kind=MomentKind.ANY,
+        cursor=moments.next_cursor,
+        limit=1,
+    )
+    assert moments_next.moments[0].moment_id != moments.moments[0].moment_id
+    with pytest.raises(CursorError, match="does not match"):
         service.list_moments(
             ingested.video_id,
             kind=MomentKind.CODE,
             cursor=moments.next_cursor,
             limit=1,
         )
+    moments_restart = service.list_moments(
+        ingested.video_id,
+        kind=MomentKind.ANY,
+        limit=1,
+    )
+    assert moments_restart.moments == moments.moments
+
+    search = service.search(
+        "evidence",
+        video_id=ingested.video_id,
+        channel=SearchChannel.SAID,
+        limit=1,
+    )
+    assert search.next_cursor is not None
+    search_next = service.search(
+        "evidence",
+        video_id=ingested.video_id,
+        channel=SearchChannel.SAID,
+        cursor=search.next_cursor,
+        limit=1,
+    )
+    assert search_next.hits[0].segment_id != search.hits[0].segment_id
+    with pytest.raises(CursorError, match="does not match"):
+        service.search(
+            "beta",
+            video_id=ingested.video_id,
+            channel=SearchChannel.SAID,
+            cursor=search.next_cursor,
+            limit=1,
+        )
+    search_restart = service.search(
+        "evidence",
+        video_id=ingested.video_id,
+        channel=SearchChannel.SAID,
+        limit=1,
+    )
+    assert search_restart.hits == search.hits
 
 
 def test_get_code_requires_exactly_one_selector_and_rejects_non_code_moments(
@@ -870,6 +1024,11 @@ def test_full_whisper_ingest_overlaps_transcription_and_visual_extraction(
 
     assert result.has_transcript is True
     assert result.keyframe_count == 2
+    assert result.timings is not None
+    assert result.timings.transcription_ms is not None
+    assert result.timings.visual_ms is not None
+    assert result.timings.total_ms >= result.timings.transcription_ms
+    assert result.timings.total_ms >= result.timings.visual_ms
     assert [value for value, _message in progress] == sorted(value for value, _message in progress)
     assert any(message == "Local Whisper transcription complete" for _value, message in progress)
 

@@ -6,7 +6,7 @@
         "--python",
         "3.12",
         "--from",
-        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.1",
+        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.2",
         "video-context-mcp",
         "serve",
         "--transport",
