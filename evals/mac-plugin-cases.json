@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.1.3",
+  "suite": "keyframe-mac-plugin-v0.1.4",
   "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, honest Keyframe provenance, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [

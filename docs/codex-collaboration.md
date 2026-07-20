@@ -65,11 +65,9 @@ for decorative summarization.
 - Select and audit the final demo video's redistribution rights.
 - Run all evals on the release artifact and record observed results.
 - Review the final diff, README claims, package metadata, and public repository.
-- Record the primary Codex session ID using `/feedback`.
+- Record the primary Codex session ID using `/feedback` and enter it on Devpost.
 - Confirm the demo is public, narrated, at most 2:59, and shows the real product.
 - Re-read the live Build Week rules immediately before submitting.
 
-## Primary session ID
-
-Not recorded yet. This field must be populated from the real `/feedback` output;
-no placeholder value should be submitted as if it were a session ID.
+The real Session ID belongs in the Devpost submission. It is intentionally not
+fabricated or stored in this public repository.

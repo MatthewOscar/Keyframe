@@ -10,10 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "keyframe"
 PROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 PACKAGE_VERSION = PROJECT["project"]["version"]
-RELEASE_SOURCE = (
-    "video-context-mcp[whisper] @ "
-    f"git+https://github.com/MatthewOscar/Keyframe.git@v{PACKAGE_VERSION}"
-)
+RELEASE_SOURCE = f"video-context-mcp[whisper]=={PACKAGE_VERSION}"
 SERVER_TAIL = ["video-context-mcp", "serve", "--transport", "stdio"]
 RELEASE_ARGS = ["--python", "3.12", "--from", RELEASE_SOURCE, *SERVER_TAIL]
 
@@ -40,6 +37,19 @@ def test_source_distribution_allowlist_excludes_private_local_evaluations() -> N
     assert sdist["only-include"] == ["src", "tests"]
     ignore_patterns = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "/local-evals/" in ignore_patterns
+
+
+def test_package_supports_python_312_through_314_with_a_312_language_floor() -> None:
+    project = PROJECT["project"]
+    assert project["requires-python"] == ">=3.12,<3.15"
+    assert {
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+    } <= set(project["classifiers"])
+    assert PROJECT["tool"]["ruff"]["target-version"] == "py312"
+    assert PROJECT["tool"]["mypy"]["python_version"] == "3.12"
+    assert (ROOT / ".python-version").read_text(encoding="utf-8").strip() == "3.12"
 
 
 def test_project_configs_use_each_clients_documented_discovery_schema() -> None:

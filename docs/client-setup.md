@@ -12,7 +12,7 @@ cannot start a process on your computer from these files.
 After cloning this repository, prepare the locked environment once:
 
 ```bash
-uv sync --frozen --group dev
+uv sync --frozen --all-extras --group dev
 ```
 
 Open or launch the client from the repository root. The checkout contains all
@@ -25,10 +25,36 @@ three non-Codex project registrations:
 | Antigravity/Agy | `.agents/mcp_config.json` | `.agents/skills/keyframe-video-rag/SKILL.md` |
 
 These project registrations run the current checkout with `uv run`. The
-installable plugin registrations use `uvx` and the immutable `v0.1.3` release
-tag. Do not enable both the project registration and an installed Keyframe
-plugin in the same workspace: that starts two local servers backed by the same
-cache.
+installable plugin registrations use `uvx`, an isolated Python 3.12 runtime,
+and the exact `video-context-mcp[whisper]==0.1.4` PyPI release. This does not
+depend on the user's system Python; the PyPI package separately supports Python
+3.12-3.14. Do not enable both the project registration and an installed
+Keyframe plugin in the same workspace: that starts two local servers backed by
+the same cache.
+
+## Codex and ChatGPT desktop
+
+Install the release-pinned marketplace and plugin from a terminal:
+
+```bash
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.4
+codex plugin add keyframe@keyframe-tools
+```
+
+To upgrade an older pinned release, replace both its marketplace snapshot and
+installed plugin:
+
+```bash
+codex plugin remove keyframe@keyframe-tools
+codex plugin marketplace remove keyframe-tools
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.4
+codex plugin add keyframe@keyframe-tools
+```
+
+Restart Codex or ChatGPT desktop, open **Plugins**, and select **Keyframe** from
+the `keyframe-tools` marketplace. Start a new chat so the updated skill and MCP
+server are loaded. The plugin needs neither a separate `pip` installation nor
+the user's system Python.
 
 ## Claude Code
 
@@ -43,12 +69,12 @@ claude
 A project MCP remains pending until approved. Start a new session after adding
 the file if an existing session does not see it.
 
-To register the tagged release for every Claude workspace instead, run:
+To register the released PyPI package for every Claude workspace instead, run:
 
 ```bash
 claude mcp add --transport stdio --scope user keyframe -- \
   uvx --python 3.12 --from \
-  "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.3" \
+  "video-context-mcp[whisper]==0.1.4" \
   video-context-mcp serve --transport stdio
 ```
 
@@ -59,13 +85,11 @@ claude plugin marketplace add MatthewOscar/Keyframe
 claude plugin install keyframe@keyframe-tools
 ```
 
-Before the release tag exists, use the checked-in project MCP for live testing
-and run `claude plugin validate --strict plugins/keyframe` for packaging checks.
-For checkout-only plugin discovery, launch
-`claude --plugin-dir ./plugins/keyframe`; its release-pinned server still cannot
-start until the tag exists. Marketplace installs are copied into Claude's
-plugin cache, so source edits require a version bump plus marketplace/plugin
-update (or reinstall) before `/reload-plugins` activates the updated copy.
+For unreleased development changes, use the checked-in project MCP and run
+`claude plugin validate --strict plugins/keyframe` for packaging checks.
+Marketplace installs are copied into Claude's plugin cache, so released source
+edits require a version bump plus marketplace/plugin update (or reinstall)
+before `/reload-plugins` activates the updated copy.
 Start a new conversation afterward. For local videos outside the open project,
 launch with
 `claude --add-dir /absolute/path/to/Videos` or configure
@@ -105,7 +129,7 @@ For a user-wide server, place this entry under `mcpServers` in
         "--python",
         "3.12",
         "--from",
-        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.3",
+        "video-context-mcp[whisper]==0.1.4",
         "video-context-mcp",
         "serve",
         "--transport",
@@ -122,16 +146,16 @@ For a user-wide server, place this entry under `mcpServers` in
 To index the repository as a Cursor plugin marketplace, run:
 
 ```bash
-agent plugin marketplace add --git-ref v0.1.3 \
+agent plugin marketplace add --git-ref v0.1.4 \
   https://github.com/MatthewOscar/Keyframe.git
 ```
 
 Then run `/add-plugin` in Cursor and select **Keyframe**. During local
 development, use the checked-in project config; the plugin's `uvx` launcher is
-release-pinned. `agent --plugin-dir ./plugins/keyframe` is still useful for
-checking plugin discovery, but the server cannot start through that path until
-the tag exists. The release tag must contain the Cursor manifests before using
-the pinned marketplace command.
+PyPI-pinned. `agent --plugin-dir ./plugins/keyframe` can check plugin discovery
+before release, but its server starts only after the referenced PyPI version is
+published. The Git tag must contain the Cursor manifests before using the
+pinned marketplace command.
 
 ## Google Antigravity and Agy
 
@@ -150,7 +174,7 @@ For a user-wide server, put this in `~/.gemini/config/mcp_config.json`:
         "--python",
         "3.12",
         "--from",
-        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.3",
+        "video-context-mcp[whisper]==0.1.4",
         "video-context-mcp",
         "serve",
         "--transport",
@@ -164,10 +188,13 @@ For a user-wide server, put this in `~/.gemini/config/mcp_config.json`:
 }
 ```
 
-The multi-client plugin directory also follows Agy's plugin layout. Validate
-and install it from a clone:
+The multi-client plugin directory also follows Agy's plugin layout. Clone the
+exact release, then validate and install it:
 
 ```bash
+git clone --branch v0.1.4 --depth 1 \
+  https://github.com/MatthewOscar/Keyframe.git
+cd Keyframe
 agy plugin validate ./plugins/keyframe
 agy plugin install ./plugins/keyframe
 ```
@@ -233,10 +260,9 @@ not available.
 - Full ingestion is synchronous and can take several minutes. Start in fast
   mode; if a client cancels a full run, retry safely because ingest is locked,
   staged, and atomically published.
-- Project configs run the checkout; plugin and global examples require the
-  `v0.1.3` tag. Until that human release step is complete, use project mode or
-  a local plugin checkout.
-- Windows remains preview-level for Keyframe v0.1.3.
+- Project configs run the checkout; global server examples pin the v0.1.4 PyPI
+  package, while plugin marketplace commands pin the immutable `v0.1.4` tag.
+- Windows remains preview-level for Keyframe v0.1.4.
 
 The relevant client specifications are maintained by
 [Claude Code](https://code.claude.com/docs/en/mcp),

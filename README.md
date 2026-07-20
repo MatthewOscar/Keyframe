@@ -17,7 +17,7 @@ Keyframe is deliberately split into two parts:
 The server does not call an LLM. In the Build Week workflow, Codex running
 GPT-5.6 reasons over Keyframe's evidence, changes code, and runs the tests.
 
-![Conceptual Keyframe workflow: video moments become said/shown evidence, verified code, and passing tests](docs/design/keyframe-devpost-hero.png)
+![Conceptual Keyframe workflow: video moments become said/shown evidence, verified code, and passing tests](https://raw.githubusercontent.com/MatthewOscar/Keyframe/main/docs/design/keyframe-devpost-hero.png)
 
 *Product-story concept; v0.1 is a local MCP server and plugin, not a hosted UI.*
 
@@ -25,48 +25,68 @@ GPT-5.6 reasons over Keyframe's evidence, changes code, and runs the tests.
 
 ### Prerequisites
 
-Keyframe v0.1.3 requires Python 3.12 and uses [`uv`](https://docs.astral.sh/uv/). Install
-these native tools before starting:
+Keyframe v0.1.4 supports CPython 3.12, 3.13, and 3.14. Install these native
+tools before starting:
 
 - FFmpeg and `ffprobe` for media inspection and frame extraction
 - Tesseract 5 for local OCR
 - Node.js 22+ as the JavaScript runtime used by current `yt-dlp` extractors
-- `uv`/`uvx` for isolated Python execution
+- `uv`/`uvx` for the recommended isolated CLI and plugin execution
 
 On macOS with Homebrew:
 
 ```bash
-brew install ffmpeg tesseract node@22 uv
+brew install ffmpeg tesseract node uv
 ```
 
-From a development checkout, install the locked environment and run the
-environment check:
+| Platform | Support level | Verification |
+| --- | --- | --- |
+| macOS on Apple Silicon | Primary | Full pipeline and Python 3.12/3.14 release tests |
+| Ubuntu Linux x64 | Supported | Full pipeline on 3.12; compatibility suite on 3.13/3.14 |
+| Windows x64 | Preview | Unit, import, optional-Whisper, and package smoke tests |
+
+The Whisper extra on Apple Silicon requires macOS 14 or newer because of its
+ONNX Runtime dependency. Intel macOS is not a supported Whisper/plugin target
+in v0.1.4.
+
+### Install the command-line server
+
+The recommended installation includes local Whisper transcription and keeps
+Keyframe isolated from the system Python:
 
 ```bash
-uv sync --frozen --group dev
+uv tool install --python 3.14 "video-context-mcp[whisper]==0.1.4"
+video-context-mcp doctor
+```
+
+The smaller captions-only installation omits Whisper:
+
+```bash
+uv tool install --python 3.14 "video-context-mcp==0.1.4"
+```
+
+Yes, ordinary `pip` installation is also supported on Python 3.12-3.14. Use it
+inside a virtual environment; Homebrew Python is externally managed and may
+reject a global `pip3 install`:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install "video-context-mcp[whisper]==0.1.4"
+video-context-mcp doctor
+```
+
+The installed plugin described below already launches an isolated, release-pinned
+server with Whisper, so plugin users should not also install the CLI manually.
+
+### Development checkout
+
+The repository keeps Python 3.12 as its reproducible development default while
+the lockfile covers all supported Python versions. From a clone, run:
+
+```bash
+uv sync --frozen --all-extras --group dev
 uv run video-context-mcp doctor
-```
-
-After version 0.1.3 is published, the equivalent isolated PyPI command is:
-
-```bash
-uvx --python 3.12 --from "video-context-mcp==0.1.3" video-context-mcp doctor
-```
-
-If PyPI is not yet available after the release is tagged, use the immutable
-GitHub release tag:
-
-```bash
-uvx --python 3.12 --from \
-  "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.3" \
-  video-context-mcp doctor
-```
-
-After the PyPI release, add `[whisper]` to the package spec only when local
-speech-to-text is needed:
-
-```bash
-uvx --python 3.12 --from "video-context-mcp[whisper]==0.1.3" video-context-mcp doctor
 ```
 
 ### Connect a client
@@ -84,7 +104,7 @@ Claude Code, Cursor, and Antigravity/Agy in addition to the Codex plugin. After
 
 The installable `plugins/keyframe` bundle contains client-specific manifests
 for Codex, Claude Code, Cursor, and Agy while reusing the same skill and server.
-See [the complete client setup guide](docs/client-setup.md) for user-wide
+See [the complete client setup guide](https://github.com/MatthewOscar/Keyframe/blob/main/docs/client-setup.md) for user-wide
 registration, marketplace commands, reload behavior, and local-file grants.
 
 ### Configure Codex directly
@@ -94,10 +114,10 @@ Add the following to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.keyframe]
 command = "uvx"
-args = ["--python", "3.12", "--from", "video-context-mcp==0.1.3", "video-context-mcp", "serve", "--transport", "stdio"]
+args = ["--python", "3.12", "--from", "video-context-mcp[whisper]==0.1.4", "video-context-mcp", "serve", "--transport", "stdio"]
 startup_timeout_sec = 180
 tool_timeout_sec = 1900
-env = { KEYFRAME_ALLOWED_ROOTS = "/Users/you/Videos" }
+env = { KEYFRAME_ALLOW_TEMP_UPLOADS = "true" }
 ```
 
 For local files, Keyframe uses workspace roots advertised by the MCP client.
@@ -113,21 +133,23 @@ shown. Cite the timestamps.”
 ### Install the Keyframe plugin in Codex and ChatGPT desktop
 
 The plugin bundles the same MCP server with the `keyframe-video-rag` workflow
-skill. Its launcher installs the exact `v0.1.3` Git tag with local Whisper, so
-judges do not need
-the PyPI publication to use it:
+skill. The marketplace is pinned to `v0.1.4`; its launcher installs the exact
+`video-context-mcp[whisper]==0.1.4` PyPI release in an isolated Python 3.12
+runtime, regardless of the user's system Python:
 
 ```bash
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.3
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.4
 codex plugin add keyframe@keyframe-tools
 ```
 
-When upgrading an existing v0.1.2 installation, remove the old internal catalog
-first so Codex does not retain two Keyframe entries:
+To replace an older release-pinned installation, refresh both the marketplace
+snapshot and the installed plugin:
 
 ```bash
-codex plugin remove keyframe@keyframe
-codex plugin marketplace remove keyframe
+codex plugin remove keyframe@keyframe-tools
+codex plugin marketplace remove keyframe-tools
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.4
+codex plugin add keyframe@keyframe-tools
 ```
 
 For local marketplace validation, add the repository root instead:
@@ -136,22 +158,44 @@ For local marketplace validation, add the repository root instead:
 codex plugin marketplace add .
 ```
 
-Before `v0.1.3` is tagged, use the direct project/server configuration for live
-testing; the installable plugin intentionally resolves that immutable tag.
-
 Then restart the ChatGPT desktop app, open the Plugins Directory, select the
 **Keyframe** marketplace source, and install **Keyframe**. Start a new chat so
-the skill and tools are loaded. Keyframe v0.1.3 targets this local desktop flow;
+the skill and tools are loaded. Keyframe v0.1.4 targets this local desktop flow;
 it does not host a ChatGPT web app.
 
 Claude Code and Cursor can install the same repository as a marketplace, while
 Agy can install `plugins/keyframe` from a clone. Those exact commands and the
 client-specific approval steps are in
-[`docs/client-setup.md`](docs/client-setup.md). Do not enable a project
+[`docs/client-setup.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/client-setup.md). Do not enable a project
 registration and the installed plugin together in the same workspace, or the
 client may start two Keyframe processes.
 
-### Judge-ready local test
+### No-build judge test
+
+After installing the release plugin, judges can exercise the published wheel
+against the first-party fixture without building Keyframe from source:
+
+```bash
+git clone --branch v0.1.4 --depth 1 \
+  https://github.com/MatthewOscar/Keyframe.git
+cd Keyframe
+codex --model gpt-5.6
+```
+
+Then ask:
+
+```text
+Index tests/fixtures/keyframe-synthetic.mp4 in full mode. Search what was said
+about normalizing non-alphanumeric separators and what was shown for slugify.
+Inspect the decisive source frame, report whether the reconstructed Python
+parses, and cite timestamps.
+```
+
+The expected evidence is a spoken hit beginning at `00:03`, a `slugify_title`
+code moment spanning approximately `00:03-00:07`, and a parse-valid result or
+an explicit OCR fallback with its source image.
+
+### Source-checkout acceptance test
 
 The repository includes a 10-second first-party video, captions, golden search
 expectations, and a complete native end-to-end test. After cloning the release
@@ -168,7 +212,7 @@ No network video, account, API key, or prebuilt cache is required for this
 judge path.
 
 For the real public-URL path, the repository also ships a small CC BY 3.0
-[derived YouTube sample](samples/4geeks-function-tutorial/README.md) with
+[derived YouTube sample](https://github.com/MatthewOscar/Keyframe/blob/main/samples/4geeks-function-tutorial/README.md) with
 archived attribution, metadata, checksums, captions, OCR, frames, and a ready
 SQLite index. The original downloaded media is not retained.
 
@@ -216,7 +260,7 @@ frames. As a guardrail for agent transcription mistakes, Keyframe can recover a
 single substituted character in a local content-hash ID only when exactly one
 ready local video matches; remote and ambiguous IDs remain strict errors.
 
-See [`docs/tool-examples.md`](docs/tool-examples.md) for exact argument objects,
+See [`docs/tool-examples.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/tool-examples.md) for exact argument objects,
 pagination, visual-result behavior, and expected errors.
 
 ## Architecture
@@ -282,7 +326,7 @@ on macOS.
 
 ## Current limits
 
-- v0.1.3 accepts individual public videos and local animated GIFs, not playlists
+- v0.1.4 accepts individual public videos and local animated GIFs, not playlists
   or livestreams. Static GIFs should be attached as images; remote GIF URLs are
   not yet an advertised compatibility surface.
 - Private, members-only, age-restricted, DRM, cookie, and login flows are out of
@@ -300,6 +344,10 @@ on macOS.
   malformed or unusually slow inputs.
 - OCR can confuse glyphs and infer indentation incorrectly. Python, JSON, and
   JavaScript receive parse checks; TypeScript and unknown languages do not.
+- Keyframe constrains answers with timestamped evidence, but it cannot
+  guarantee a downstream model's reasoning. Lighter models can still confuse
+  visually similar steps; exact visual claims should be checked against the
+  returned source frame. The judged workflow uses GPT-5.6.
 - Caption availability and media extraction depend on upstream providers and
   the pinned `yt-dlp` release.
 - Remote formats must be downloadable through Keyframe's validated in-process
@@ -308,20 +356,39 @@ on macOS.
 - Whisper is optional in the base Python package and bundled by the installable
   plugin. It can be resource intensive on CPU-only machines, and first use may
   download the configured model before ingestion begins.
-- Windows support is preview-level in v0.1.3.
+- Windows support is preview-level in v0.1.4.
 - The bundled registrations target local CLI and desktop sessions. Hosted
   agents cannot launch this STDIO process on the user's machine.
 
 ## Build Week and GPT-5.6
 
+### How Codex and Matthew collaborated
+
+Codex accelerated the project by turning the approved specification into the
+typed MCP contracts, acquisition/OCR/cache pipeline, comprehensive test suite, plugin
+bundles, cross-platform CI, evals, and release automation. Focused Codex agents
+audited independent surfaces in parallel; the primary session integrated their
+work, exercised real local and YouTube videos, diagnosed failures from raw tool
+traces, and iterated on retrieval behavior rather than stopping at generated
+scaffolding.
+
+Matthew Wyatt made the key product and engineering decisions: use an MCP server
+plus a small retrieval skill; keep extraction deterministic, local, and free of
+embedded model calls; use `yt-dlp` instead of creating a provider extractor;
+make fast ingestion include a bounded visual scout; require exact source-frame
+verification for uncertain OCR; and prioritize a reliable desktop plugin over
+a hosted web app. Matthew reviewed real agent runs, rejected hallucinated video
+interpretations, approved each release direction, and selected the final demo
+story. The detailed record is linked below.
+
 The judged flow uses GPT-5.6 in Codex to turn retrieved video evidence into a
 tested repository change. Keyframe supplies deterministic evidence; GPT-5.6
 selects relevant moments, compares OCR with source frames, applies the change,
 and explains it with timestamp citations. The ten reproducible prompts in
-[`evals/cases.json`](evals/cases.json) exercise that division of labor.
+[`evals/cases.json`](https://github.com/MatthewOscar/Keyframe/blob/main/evals/cases.json) exercise that division of labor.
 Supplementary Mac-plugin regressions for local attachment staging, honest
 provenance, warm-cache latency, and animated GIFs are in
-[`evals/mac-plugin-cases.json`](evals/mac-plugin-cases.json).
+[`evals/mac-plugin-cases.json`](https://github.com/MatthewOscar/Keyframe/blob/main/evals/mac-plugin-cases.json).
 
 Make the judged model choice explicit before recording. Either launch Codex
 with `codex --model gpt-5.6` or set this in `~/.codex/config.toml`:
@@ -331,21 +398,24 @@ model = "gpt-5.6"
 ```
 
 The development record distinguishes Codex-generated work from human product
-decisions in [`docs/codex-collaboration.md`](docs/codex-collaboration.md). The
+decisions in [`docs/codex-collaboration.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/codex-collaboration.md). The
 submission session ID is intentionally not fabricated and must be recorded from
 `/feedback` before submission.
 
 The release checklist in
-[`docs/submission-checklist.md`](docs/submission-checklist.md) maps the current
+[`docs/submission-checklist.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/submission-checklist.md) maps the current
 Devpost requirements to concrete artifacts and leaves human-only submission
-steps visibly unchecked.
+steps visibly unchecked. Ready-to-paste English submission copy is in
+[`docs/devpost-submission.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/devpost-submission.md),
+with explicit placeholders for the public demo URL and real `/feedback` Session
+ID.
 
 ## Develop and test
 
 ```bash
 git clone https://github.com/MatthewOscar/Keyframe.git
 cd Keyframe
-uv sync --frozen --group dev
+uv sync --frozen --all-extras --group dev
 uv run video-context-mcp doctor
 uv run pytest
 uv run ruff check .
@@ -358,9 +428,10 @@ STDIO is the supported client transport. For loopback-only protocol testing,
 run `uv run video-context-mcp serve --transport streamable-http`; the CLI
 rejects non-loopback hosts and this mode is not a production deployment.
 
-CI runs the full suite with FFmpeg and Tesseract on macOS and Ubuntu. Windows
-runs non-integration tests plus import and package checks. Test fixtures must be
-first-party generated or carry a recorded redistribution license.
+CI runs the full suite with FFmpeg and Tesseract on macOS and Ubuntu, including
+Python 3.13/3.14 and optional-Whisper compatibility jobs. Windows 3.12/3.14
+runs non-integration tests plus Whisper import and package checks. Test fixtures
+must be first-party generated or carry a recorded redistribution license.
 
 To publish, create a GitHub environment named `pypi`, configure a PyPI Trusted
 Publisher for this repository and workflow, update the version and lockfile,
@@ -371,6 +442,6 @@ with GitHub OIDC; it stores no PyPI token.
 
 Keyframe is licensed under Apache-2.0. Native tools, Python dependencies, and
 any future demo media retain their own licenses. See
-[`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES). Keyframe uses `yt-dlp` as its
+[`THIRD_PARTY_NOTICES`](https://github.com/MatthewOscar/Keyframe/blob/main/THIRD_PARTY_NOTICES). Keyframe uses `yt-dlp` as its
 upstream public-media extraction engine rather than implementing provider
 extractors itself.

@@ -51,8 +51,8 @@ def format_checks(checks: list[Check]) -> str:
 
 def _python_check() -> Check:
     version = sys.version_info[:2]
-    ok = version == (3, 12)
-    return Check("Python", ok, f"{version[0]}.{version[1]} (requires 3.12)")
+    ok = (3, 12) <= version < (3, 15)
+    return Check("Python", ok, f"{version[0]}.{version[1]} (supports 3.12-3.14)")
 
 
 def _executable_check(name: str, executable: str, args: list[str]) -> Check:

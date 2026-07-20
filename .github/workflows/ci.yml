@@ -47,7 +47,11 @@ jobs:
         run: uv build && uv run twine check dist/*
 
   windows-smoke:
-    name: Windows unit and package smoke
+    name: Windows Python ${{ matrix.python-version }} smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,12 +64,54 @@ jobs:
           enable-cache: true
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install project
-        run: uv sync --frozen --group dev
+        run: uv sync --python ${{ matrix.python-version }} --all-extras --frozen --group dev
       - name: Run non-integration tests
-        run: uv run pytest -m "not integration and not e2e"
-      - name: Import smoke
-        run: uv run python -c "import video_context_mcp; print(video_context_mcp.__version__)"
+        run: uv run --python ${{ matrix.python-version }} pytest -m "not integration and not e2e"
+      - name: Import and optional-dependency smoke
+        run: uv run --python ${{ matrix.python-version }} python -c "import faster_whisper, onnxruntime, video_context_mcp; print(video_context_mcp.__version__)"
       - name: Build and inspect distributions
-        run: uv build && uv run twine check dist/*
+        run: uv build && uv run --python ${{ matrix.python-version }} twine check dist/*
+
+  python-compat:
+    name: Python ${{ matrix.python-version }} compatibility (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.14"
+          - os: macos-latest
+            python-version: "3.14"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.18"
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install native tools (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes ffmpeg tesseract-ocr
+      - name: Install native tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg tesseract
+      - name: Install project with optional Whisper support
+        run: uv sync --python ${{ matrix.python-version }} --all-extras --frozen --group dev
+      - name: Test
+        run: uv run --python ${{ matrix.python-version }} pytest
+      - name: Import and optional-dependency smoke
+        run: uv run --python ${{ matrix.python-version }} python -c "import faster_whisper, onnxruntime, video_context_mcp; print(video_context_mcp.__version__)"
+      - name: Build and inspect distributions
+        run: uv build && uv run --python ${{ matrix.python-version }} twine check dist/*
+      - name: Install built wheel in a fresh tool environment
+        run: uvx --python ${{ matrix.python-version }} --from ./dist/*.whl video-context-mcp version

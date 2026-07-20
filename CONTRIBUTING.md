@@ -1,7 +1,8 @@
 # Contributing to Keyframe
 
-Keyframe is an Apache-2.0 Python project targeting Python 3.12 for its primary
-development and CI environment.
+Keyframe is an Apache-2.0 Python project supporting Python 3.12-3.14. Python
+3.12 remains the reproducible development default, and CI verifies every
+supported minor version.
 
 ## Set up
 

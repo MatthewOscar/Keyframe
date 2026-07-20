@@ -21,6 +21,27 @@ def test_required_check_fails_doctor() -> None:
     assert "[FAIL] required" in format_checks(checks)
 
 
+@pytest.mark.parametrize("version", [(3, 12), (3, 13), (3, 14)])
+def test_supported_python_versions_pass(
+    version: tuple[int, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(doctor.sys, "version_info", (*version, 0, "final", 0))
+
+    check = doctor._python_check()
+
+    assert check.ok
+    assert "supports 3.12-3.14" in check.detail
+
+
+@pytest.mark.parametrize("version", [(3, 11), (3, 15)])
+def test_unsupported_python_versions_fail(
+    version: tuple[int, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(doctor.sys, "version_info", (*version, 0, "final", 0))
+
+    assert not doctor._python_check().ok
+
+
 def test_doctor_honors_configured_native_executables(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

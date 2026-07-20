@@ -1,27 +1,34 @@
 # Build Week submission checklist
 
 Last verified against the [official rules](https://openai.devpost.com/rules) on
-2026-07-18. The official page remains the source of truth.
+2026-07-20. The official page remains the source of truth.
 
 ## Implemented in the repository
 
 - [x] Developer Tools project built with Codex and intended for GPT-5.6.
-- [x] Installable local project with an exact Python 3.12 dependency lock.
+- [x] Installable local project with one locked dependency graph for Python
+      3.12-3.14 and CI coverage for every supported minor version.
 - [x] Public-repository licensing (`Apache-2.0`) and third-party notices.
 - [x] Plugin and direct-MCP instructions for Codex, Claude Code, Cursor, and
       Antigravity/Agy, with supported-platform notes.
+- [x] Release-pinned PyPI/plugin installation and a first-party judge test that
+      do not require rebuilding the project from source.
 - [x] A network-free, first-party fixture that judges can test immediately.
 - [x] README explanation of Codex collaboration and human decisions.
 - [x] Reproducible eval prompts, including video evidence to a tested change.
 - [x] A narrated demo script designed to remain below three minutes.
+- [x] Ready-to-paste English Devpost copy with no-build test instructions and
+      explicit placeholders for the demo URL and real Session ID.
 
 ## Human release steps
 
-- [ ] Review the complete diff and merge the verified release branch.
+- [ ] Review the complete v0.1.4 diff, commit it to `main`, and confirm CI.
 - [x] Create and push immutable tag `v0.1.0`.
-- [ ] Create and push the verified agent-efficiency release tag `v0.1.3`.
-- [ ] Create the free PyPI project/Trusted Publisher and confirm the workflow,
-      or retain the exact Git-tag launcher already bundled in the plugin.
+- [x] Create and push the verified agent-efficiency release tag `v0.1.3`.
+- [x] Create the PyPI project, configure Trusted Publishing, and publish the
+      verified `video-context-mcp` v0.1.3 wheel and source distribution.
+- [ ] Create and push the verified Python 3.14/setup release tag `v0.1.4`, then
+      confirm its PyPI and GitHub releases complete successfully.
 - [ ] Install the tagged plugin in Codex and ChatGPT desktop and run the
       headline flow with Codex visibly configured to `gpt-5.6`.
 - [ ] Smoke-install the tagged release in Claude Code, Cursor, and Agy; approve
@@ -31,13 +38,22 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 - [ ] Run all ten prompts in `evals/cases.json` and record observed outcomes.
 - [ ] Run the Mac plugin regressions in `evals/mac-plugin-cases.json` and record
       attachment staging, provenance, warm-cache timing, and animated-GIF results.
-- [ ] Record a public narrated YouTube demo no longer than 2:59, using only
-      first-party or separately audited media and no unlicensed music.
-- [ ] Add the public video URL and public repository URL to Devpost.
-- [ ] Run `/feedback` in the primary Codex thread and add its real Session ID
-      to the submission and collaboration record.
+- [ ] Record a clear, English-language narrated demo no longer than 2:59 that
+      shows the working product and explicitly explains how Codex and GPT-5.6
+      were used.
+- [ ] Complete a final trademark, copyright, privacy, and credential review of
+      every demo frame and submission asset; use no unlicensed music or media.
+- [ ] Select **Developer Tools** on Devpost and finalize the English project
+      description, supported platforms, and no-build testing instructions.
+- [ ] Add the public demo-video URL and public repository URL to Devpost.
+- [ ] Run `/feedback` in the primary Codex thread and enter its real Session ID
+      in the Devpost submission.
+- [ ] Confirm every submitted text, video, and testing instruction is in English.
+- [ ] Keep the repository, package, and judge test free and unrestricted through
+      the end of judging on **August 5, 2026 at 5:00 PM Pacific Time**.
 - [ ] Re-read the live rules immediately before submission.
-- [ ] Submit before **July 21, 2026 at 5:00 PM Pacific Time**.
+- [ ] Submit before **July 21, 2026 at 5:00 PM Pacific Time / 7:00 PM Central
+      Time**.
 
 ## Submission copy must cover
 
