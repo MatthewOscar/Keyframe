@@ -22,12 +22,16 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 
 ## Human release steps
 
-- [ ] Review the complete v0.1.4 diff, commit it to `main`, and confirm CI.
+- [ ] Matthew independently writes every Devpost submission field; do not paste
+      AI-generated prose from `docs/devpost-submission.md`.
+- [ ] Review the complete v0.2.0 diff, commit it to `main`, and confirm CI.
 - [x] Create and push immutable tag `v0.1.0`.
 - [x] Create and push the verified agent-efficiency release tag `v0.1.3`.
 - [x] Create the PyPI project, configure Trusted Publishing, and publish the
       verified `video-context-mcp` v0.1.3 wheel and source distribution.
-- [ ] Create and push the verified Python 3.14/setup release tag `v0.1.4`, then
+- [x] Create and push the verified Python 3.14/setup release tag `v0.1.4`, then
+      confirm its PyPI and GitHub releases complete successfully.
+- [ ] Create and push the verified smart-retrieval release tag `v0.2.0`, then
       confirm its PyPI and GitHub releases complete successfully.
 - [ ] Install the tagged plugin in Codex and ChatGPT desktop and run the
       headline flow with Codex visibly configured to `gpt-5.6`.

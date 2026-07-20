@@ -30,29 +30,34 @@ user for a shorter excerpt when the four-hour hard maximum is exceeded.
 
 Successful ingests include request-local `timings`. `total_ms` is authoritative;
 transcription and visual processing may overlap, so component values must not
-be summed. A null component means that stage was skipped or reused.
+be summed. A null component means that stage was skipped or reused. Fast remote
+ingests may also report a bounded silent `proxy_cached` copy with its byte size
+and expiry. That low-resolution proxy lets later timestamp requests seek one
+frame without upgrading the entire visual index.
 
 Repeat with `"mode": "full"` for code or terminal sequences, diagram topology,
-UI state changes, probe gaps, uncertain or contradictory OCR, and negative
-visual claims. A single relevant probe image can settle one targeted visual
-fact. A completed full index reports `visual_coverage="full"` and also satisfies
-later fast requests.
+multi-step UI state changes, several unresolved or contradictory moments, and
+negative visual claims. A targeted local/proxy seek can settle one probe gap
+without a full pass. A completed full index reports `visual_coverage="full"`
+and also satisfies later fast requests.
 
 Local animated GIFs follow the same calls. They report `has_audio=false`, skip
 Whisper under `auto`, and use denser but bounded one-loop sampling in full mode.
 Static GIFs should be supplied as ordinary images.
 
-## Read a bounded transcript page
+## Choose an exact or compact transcript view
 
-Transcript pages default to the maximum 200 segments so whole-video retrieval
-uses the fewest calls. Set a smaller explicit limit for narrow time-bounded
-reads, as in this example:
+Use `view="compact"` for a broad summary. It removes overlap from rolling
+automatic captions and groups speech into deterministic 60-second blocks, so a
+115-minute video normally fits in one 200-block call. Use `view="exact"` for a
+quotation or a bounded follow-up where the original cue timing matters:
 
 ```json
 {
   "video_id": "youtube-VIDEO_ID",
   "start_s": 120,
   "end_s": 180,
+  "view": "exact",
   "limit": 40
 }
 ```
@@ -69,12 +74,14 @@ change because they are not part of cursor scope.
 
 ## Summarize a whole video efficiently
 
-Use one fast ingest, one `video_list_moments` request with `kind="any"` and
-`limit=12`, then `video_get_transcript` with `limit=200` and no time bounds.
-Follow `next_cursor` only while `has_more=true`, and inspect at most four frames
-for consequential visual claims. Skip generic searches; reserve `video_search`
-for targeted questions. If a full upgrade is necessary, list moments once for
-that new index generation because prior moment IDs and cursors are invalid.
+For a generic video over 30 minutes, use the descriptive ingest chapters as the
+outline, one `video_list_moments` request with `kind="any"` and `limit=12`, and
+one `video_get_transcript` request with `view="compact"` and `limit=200`. Follow
+a compact cursor only when the fixed runtime exceeds that page. Inspect at most
+two consequential frames. Do not fan transcript retrieval across agents or
+upgrade to full merely because the video contains a demonstration. Reserve
+bounded exact transcript windows, targeted search, and additional frames for
+specific or consequential follow-ups.
 
 ## Anchor speech, then search the same visual window
 
@@ -144,13 +151,14 @@ confidence is low, inspect the image and preserve uncertainty. Moment IDs are
 opaque and generation-scoped; retrieve fresh IDs after upgrading probe coverage
 to full or performing any other refresh/re-ingestion.
 
-## Retrieve one exact retained frame
+## Retrieve one decisive frame
 
 ```json
 {
   "video_id": "youtube-VIDEO_ID",
   "moment_id": "MOMENT_ID_FROM_BOUNDED_SHOWN_SEARCH",
-  "region": "full"
+  "region": "full",
+  "quality": "auto"
 }
 ```
 
@@ -162,18 +170,47 @@ timestamp only when no moment ID is available:
 {
   "video_id": "youtube-VIDEO_ID",
   "t": 137.5,
-  "region": "auto_crop"
+  "region": "auto_crop",
+  "quality": "auto"
 }
 ```
 
-The structured result includes `requested_moment_id` or `requested_t`, retained
-`start_s`/`end_s`, `requested_t_covered`, `actual_t`, `ocr_text`,
-`ocr_confidence`, and `visual_coverage`; the MCP result also normally includes
-an image block. Cite `actual_t`, and treat `requested_t_covered=false` under
-probe coverage as a gap requiring full coverage. If the host says image content was omitted
-because the model lacks image input, do not say the frame was seen or visually
-confirmed. Label the result OCR-derived and corroborate an exact identity with
-same-window full-index OCR from an adjacent moment, or preserve uncertainty.
+`quality="auto"` reuses a retained moment when it covers the request, then seeks
+the exact timestamp from an authorized unchanged local source or a retained
+low-resolution remote proxy when it does not. Use `quality="probe"` to prefer a
+bounded proxy/local seek. `quality="source"` requires the original local file;
+remote source-quality extraction is rejected rather than allowing FFmpeg to
+open an unvalidated network connection.
+
+An older or expired remote cache may report `proxy_cached=false`. If an auto
+timestamp call then returns retained evidence with `requested_t_covered=false`,
+repeat the original fast ingest once with `refresh=true`, discard prior moment
+IDs/cursors, and retry that timestamp. This refresh rebuilds the small seek
+proxy without running full-video OCR.
+
+The structured result reports `requested_quality`, `evidence_quality`, pixel dimensions,
+the selector, retained bounds when applicable, `requested_t_covered`,
+`actual_t`, OCR/confidence, and visual coverage. Cite `actual_t` and describe the
+attached image rather than inferring from a nearby probe. A targeted seek can
+settle a probe gap without full-video OCR; full mode is still appropriate for a
+sequence, an exhaustive visual claim, or several unresolved moments. If the
+host says image content was omitted because the model lacks image input, do not
+say the frame was seen or visually confirmed. Label the result OCR-derived and
+preserve uncertainty.
+
+## Prune retained remote proxies
+
+Silent low-resolution remote proxies expire after seven days and are kept under
+a 2 GiB global least-recently-used quota by default. Remove expired or
+over-quota entries immediately with:
+
+```bash
+video-context-mcp cache prune
+```
+
+Set `KEYFRAME_PROXY_TTL_S=0` or `KEYFRAME_PROXY_CACHE_BYTES=0` to disable proxy
+retention. Both values are non-negative integers; the byte setting is an exact
+quota.
 
 ## Expected errors
 

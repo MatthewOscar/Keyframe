@@ -226,7 +226,25 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "For each source, make at most one successful fast ingest" in contents[0]
     assert "Do not split, restage, or reconstruct the source" in contents[0]
     assert "Skip generic search for a whole-video summary" in contents[0]
-    assert "default `limit=200` and no time bounds" in contents[0]
+    assert (
+        "Map explicit requests for \"quick,\" \"fast,\" \"overview,\" or \"gist\""
+        in contents[0]
+    )
+    assert "generic whole-video summary over 30 minutes" in contents[0]
+    assert "use exactly one routing" in contents[0]
+    assert "`view=\"compact\"`" in contents[0]
+    assert "`limit=200`" in contents[0]
+    assert "`proxy_cached=false`" in contents[0]
+    assert "`refresh=true`" in contents[0]
+    assert "at most six transcript windows" in contents[0]
+    assert "each no longer than 90 seconds" in contents[0]
+    assert "at most two consequential probe" in contents[0]
+    assert "Do not full-upgrade merely because" in contents[0]
+    assert '`quality="auto"`' in contents[0]
+    assert "evidence_quality" in contents[0]
+    assert "one targeted seek cannot settle" in contents[0]
+    assert "Do not fan transcript pages or windows out to multiple agents" in contents[0]
+    assert "count Keyframe calls" in contents[0]
     assert "Copy it byte-for-byte" in contents[0]
     assert "Open this skill only through the exact host-provided locator" in contents[0]
     assert "do not search for another copy" in contents[0]
@@ -235,7 +253,7 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "follow-up such as" in contents[0]
     assert "Pass that episode's `start_s`/`end_s`" in contents[0]
     assert "never join an ID or" in contents[0]
-    assert "requested_t_covered=true" in contents[0]
+    assert "`requested_t_covered`" in contents[0]
     assert "Label the answer OCR-derived" in contents[0]
     assert "temporally local evidence" in contents[0]
     server_source = (ROOT / "src/video_context_mcp/server.py").read_text(encoding="utf-8")
@@ -246,5 +264,6 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "instead of searching plugin caches" in server_source
     assert "Exact identity follow-ups" in server_source
     assert "Never select a higher-ranked OCR hit from another interval" in server_source
-    assert "requested_t_covered=false" in server_source
+    assert "view='compact'" in server_source
+    assert "quality='auto' before upgrading" in server_source
     assert "never claim visual inspection" in server_source

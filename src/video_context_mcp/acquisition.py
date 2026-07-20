@@ -149,6 +149,8 @@ class AcquiredSource:
     media_path: Path | None = None
     warnings: tuple[str, ...] = ()
     owns_media: bool = False
+    media_profile: MediaProfile | None = None
+    media_contains_audio: bool = False
     _temp_dir: Path | None = field(default=None, repr=False)
 
     def cleanup(self) -> None:
@@ -1717,6 +1719,8 @@ def acquire_remote(
             media_path=media_path,
             warnings=tuple(warnings),
             owns_media=media_path is not None,
+            media_profile=profile,
+            media_contains_audio=downloaded_has_audio,
             _temp_dir=temp_dir,
         )
     except BaseException as exc:

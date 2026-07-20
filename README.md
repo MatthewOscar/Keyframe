@@ -25,7 +25,7 @@ GPT-5.6 reasons over Keyframe's evidence, changes code, and runs the tests.
 
 ### Prerequisites
 
-Keyframe v0.1.4 supports CPython 3.12, 3.13, and 3.14. Install these native
+Keyframe v0.2.0 supports CPython 3.12, 3.13, and 3.14. Install these native
 tools before starting:
 
 - FFmpeg and `ffprobe` for media inspection and frame extraction
@@ -47,7 +47,7 @@ brew install ffmpeg tesseract node uv
 
 The Whisper extra on Apple Silicon requires macOS 14 or newer because of its
 ONNX Runtime dependency. Intel macOS is not a supported Whisper/plugin target
-in v0.1.4.
+in v0.2.0.
 
 ### Install the command-line server
 
@@ -55,14 +55,14 @@ The recommended installation includes local Whisper transcription and keeps
 Keyframe isolated from the system Python:
 
 ```bash
-uv tool install --python 3.14 "video-context-mcp[whisper]==0.1.4"
+uv tool install --python 3.14 'video-context-mcp[whisper]'
 video-context-mcp doctor
 ```
 
 The smaller captions-only installation omits Whisper:
 
 ```bash
-uv tool install --python 3.14 "video-context-mcp==0.1.4"
+uv tool install --python 3.14 video-context-mcp
 ```
 
 Yes, ordinary `pip` installation is also supported on Python 3.12-3.14. Use it
@@ -72,9 +72,24 @@ reject a global `pip3 install`:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install "video-context-mcp[whisper]==0.1.4"
+pip install 'video-context-mcp[whisper]'
 video-context-mcp doctor
 ```
+
+Both commands install the latest release. The quotes protect the `[whisper]`
+extra from shell wildcard expansion, especially in zsh; they do not pin a
+version. In a `requirements.txt` file, write the package spec without quotes.
+To upgrade later, run `uv tool upgrade video-context-mcp` or, inside the active
+virtual environment, `pip install --upgrade 'video-context-mcp[whisper]'`.
+
+For a reproducible Build Week evaluation, pin the tested release explicitly:
+
+```bash
+pip install 'video-context-mcp[whisper]==0.2.0'
+```
+
+The checked-in plugin launchers and judge instructions use that exact pin;
+ordinary users do not need it.
 
 The installed plugin described below already launches an isolated, release-pinned
 server with Whisper, so plugin users should not also install the CLI manually.
@@ -107,18 +122,22 @@ for Codex, Claude Code, Cursor, and Agy while reusing the same skill and server.
 See [the complete client setup guide](https://github.com/MatthewOscar/Keyframe/blob/main/docs/client-setup.md) for user-wide
 registration, marketplace commands, reload behavior, and local-file grants.
 
-### Configure Codex directly
+### Configure Codex directly with the tested release
 
 Add the following to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.keyframe]
 command = "uvx"
-args = ["--python", "3.12", "--from", "video-context-mcp[whisper]==0.1.4", "video-context-mcp", "serve", "--transport", "stdio"]
+args = ["--python", "3.12", "--from", "video-context-mcp[whisper]==0.2.0", "video-context-mcp", "serve", "--transport", "stdio"]
 startup_timeout_sec = 180
 tool_timeout_sec = 1900
 env = { KEYFRAME_ALLOW_TEMP_UPLOADS = "true" }
 ```
+
+This direct MCP configuration is pinned for reproducibility. Remove
+`==0.2.0` from the `--from` value if you intentionally want the launcher to
+follow the latest PyPI release instead.
 
 For local files, Keyframe uses workspace roots advertised by the MCP client.
 It never treats the launcher working directory as authorization. If a client
@@ -133,12 +152,12 @@ shown. Cite the timestamps.”
 ### Install the Keyframe plugin in Codex and ChatGPT desktop
 
 The plugin bundles the same MCP server with the `keyframe-video-rag` workflow
-skill. The marketplace is pinned to `v0.1.4`; its launcher installs the exact
-`video-context-mcp[whisper]==0.1.4` PyPI release in an isolated Python 3.12
+skill. The marketplace is pinned to `v0.2.0`; its launcher installs the exact
+`video-context-mcp[whisper]==0.2.0` PyPI release in an isolated Python 3.12
 runtime, regardless of the user's system Python:
 
 ```bash
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.4
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.0
 codex plugin add keyframe@keyframe-tools
 ```
 
@@ -148,7 +167,7 @@ snapshot and the installed plugin:
 ```bash
 codex plugin remove keyframe@keyframe-tools
 codex plugin marketplace remove keyframe-tools
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.4
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.0
 codex plugin add keyframe@keyframe-tools
 ```
 
@@ -160,7 +179,7 @@ codex plugin marketplace add .
 
 Then restart the ChatGPT desktop app, open the Plugins Directory, select the
 **Keyframe** marketplace source, and install **Keyframe**. Start a new chat so
-the skill and tools are loaded. Keyframe v0.1.4 targets this local desktop flow;
+the skill and tools are loaded. Keyframe v0.2.0 targets this local desktop flow;
 it does not host a ChatGPT web app.
 
 Claude Code and Cursor can install the same repository as a marketplace, while
@@ -176,7 +195,7 @@ After installing the release plugin, judges can exercise the published wheel
 against the first-party fixture without building Keyframe from source:
 
 ```bash
-git clone --branch v0.1.4 --depth 1 \
+git clone --branch v0.2.0 --depth 1 \
   https://github.com/MatthewOscar/Keyframe.git
 cd Keyframe
 codex --model gpt-5.6
@@ -233,30 +252,33 @@ available transcript and a bounded visual probe of at most 12 representative
 frames; a cache hit can already return full coverage. Branch on the returned
 `has_transcript` and `visual_coverage`. The probe makes visual dependencies
 discoverable without pretending to cover every screen state.
-Inspect its moment summaries before deciding captions are sufficient. Upgrade
-to full mode for visual sequences, probe gaps, uncertain OCR, or claims that
-something never appeared; a single decisive probe frame may be enough for one
-targeted fact.
+Inspect its moment summaries before deciding captions are sufficient. Use a
+targeted timestamp frame for one probe gap; upgrade to full mode for visual
+sequences, several unresolved moments, or claims that something never appeared.
+A single decisive frame may be enough for one targeted fact.
 
 ### MCP tools
 
 | Tool | Purpose |
 | --- | --- |
-| `video_ingest` | Index one local/public video or local animated GIF using a sparse fast probe or bounded full analysis, with captions, local Whisper for audio, or no transcript; report cache status and request-local stage timings. |
-| `video_get_transcript` | Page through timestamped transcript segments, optionally within a time range. |
+| `video_ingest` | Index one local/public video or local animated GIF using a sparse fast probe or bounded full analysis, with captions, local Whisper for audio, or no transcript; report cache, silent proxy, and request-local stage timings. |
+| `video_get_transcript` | Retrieve original cues for exact work or de-overlapped 60-second compact blocks for efficient summaries, optionally within a time range. |
 | `video_search` | Rank matching `said`, `shown`, or combined evidence across one video or the local library, optionally inside one time window. |
 | `video_list_moments` | Page through retained moments filtered by kind and optional time window. |
 | `video_get_code` | Return reconstructed code plus its cropped source frame for a moment or nearby timestamp. |
-| `video_get_frame` | Return an exact `moment_id` or nearest timestamped frame with source image, retained bounds, and OCR fallback. |
+| `video_get_frame` | Return one decisive image by retained moment or timestamp; automatically seek probe gaps from an unchanged local source or bounded remote proxy and report evidence quality and dimensions. |
 
 Classification, language detection, OCR confidence, and parse status are
 evidence—not guarantees. Visual tools return both structured metadata and the
 source image so the model can inspect disagreements.
 
-For whole-video summaries, the bundled skill avoids generic search: it lists
-one 12-moment routing page, retrieves transcript pages at the 200-segment
-maximum with byte-for-byte opaque cursors, and verifies only consequential
-frames. As a guardrail for agent transcription mistakes, Keyframe can recover a
+For generic videos over 30 minutes, the bundled skill uses descriptive chapters,
+one 12-moment routing page, and de-overlapped 60-second transcript blocks rather
+than paging thousands of rolling caption cues. It checks at most two
+consequential frames and does not full-upgrade merely because the video contains
+a demonstration. Exact follow-ups switch back to a bounded original transcript
+window and a decisive frame. As a guardrail for agent transcription mistakes,
+Keyframe can recover a
 single substituted character in a local content-hash ID only when exactly one
 ready local video matches; remote and ambiguous IDs remain strict errors.
 
@@ -271,6 +293,7 @@ flowchart LR
     B --> C[Captions]
     B --> W[Isolated optional Whisper worker]
     B --> P[Fast: bounded visual probe]
+    B --> Q[Silent low-resolution seek proxy]
     B --> D[Full: bounded temporal sampling]
     D --> E[Adjacent-frame grouping]
     P --> F[Bounded parallel OCR + classification]
@@ -278,7 +301,8 @@ flowchart LR
     C --> G[(SQLite + FTS5)]
     W --> G
     F --> G
-    G --> H[Six MCP tools]
+    Q --> H[Six MCP tools]
+    G --> H
     H --> I[Keyframe workflow skill]
     I --> J[Codex / ChatGPT / Claude Code / Cursor / Agy]
 ```
@@ -287,9 +311,12 @@ Remote media and decoded analysis frames use a private, per-`KEYFRAME_HOME`
 namespace beneath the operating system's native temporary directory (`%TEMP%`
 on Windows and the platform temp location on macOS/Linux). A successful ingest
 atomically publishes derived transcript, OCR, metadata, and representative
-frames to the cache, then removes the downloaded source and analysis workspace.
-Failed ingests do not publish partial records, and startup recovery removes
-interrupted scratch work left in that namespace.
+frames to the cache, then removes the original download and analysis workspace.
+For fast remote ingestion, Keyframe may retain only a silent low-resolution
+visual proxy so a later timestamp can be verified without full-video OCR. The
+proxy has a seven-day TTL and shares a 2 GiB least-recently-used quota by
+default. Failed ingests do not publish partial records, and startup recovery
+removes interrupted scratch work left in that namespace.
 
 When captions are unavailable, Keyframe overlaps the isolated Whisper worker
 with either sparse-probe or full visual extraction, analyzes retained frames
@@ -302,9 +329,9 @@ on macOS.
 
 - Processing and indexing happen on the machine running the MCP server.
 - `KEYFRAME_HOME` overrides the platform-native Keyframe data directory.
-- SQLite, text indexes, and the retained evidence frames needed by later tool
-  calls persist under `KEYFRAME_HOME`; disposable downloads and intermediate
-  frames do not.
+- SQLite, text indexes, retained evidence frames, and bounded silent remote
+  proxies needed by later timestamp seeks persist under `KEYFRAME_HOME`;
+  original downloads, audio tracks, and intermediate frames do not.
 - Caller-owned local videos are read in place and are never copied, moved, or
   deleted by Keyframe.
 - Local reads are limited to per-request MCP workspace roots plus explicit
@@ -315,6 +342,10 @@ on macOS.
   staging privacy relies on the inherited ACL of the user's temp directory
   because POSIX ownership and mode bits are unavailable.
 - Derived frames and text remain cached until the user removes that directory.
+- Remote proxies expire after seven days and are evicted least-recently-used
+  above 2 GiB. Run `video-context-mcp cache prune` to enforce those bounds now,
+  or set `KEYFRAME_PROXY_TTL_S=0` or `KEYFRAME_PROXY_CACHE_BYTES=0` to disable
+  proxy retention.
 - Extracted transcript/OCR is untrusted source material, never agent
   instructions.
 - Evidence returned to an agent becomes model input and follows that client's
@@ -326,7 +357,7 @@ on macOS.
 
 ## Current limits
 
-- v0.1.4 accepts individual public videos and local animated GIFs, not playlists
+- v0.2.0 accepts individual public videos and local animated GIFs, not playlists
   or livestreams. Static GIFs should be attached as images; remote GIF URLs are
   not yet an advertised compatibility surface.
 - Private, members-only, age-restricted, DRM, cookie, and login flows are out of
@@ -353,10 +384,14 @@ on macOS.
 - Remote formats must be downloadable through Keyframe's validated in-process
   HTTP, native HLS, or DASH transport. Formats that require FFmpeg, RTMP, or
   another external process to make network connections are rejected.
+- On-demand `quality="source"` frame retrieval is local-only. Remote timestamp
+  seeks use the validated silent low-resolution proxy; Keyframe will not let
+  FFmpeg bypass its closed-world network validation to fetch a source-quality
+  remote clip.
 - Whisper is optional in the base Python package and bundled by the installable
   plugin. It can be resource intensive on CPU-only machines, and first use may
   download the configured model before ingestion begins.
-- Windows support is preview-level in v0.1.4.
+- Windows support is preview-level in v0.2.0.
 - The bundled registrations target local CLI and desktop sessions. Hosted
   agents cannot launch this STDIO process on the user's machine.
 
@@ -405,7 +440,8 @@ submission session ID is intentionally not fabricated and must be recorded from
 The release checklist in
 [`docs/submission-checklist.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/submission-checklist.md) maps the current
 Devpost requirements to concrete artifacts and leaves human-only submission
-steps visibly unchecked. Ready-to-paste English submission copy is in
+steps visibly unchecked. A factual worksheet for Matthew's independently
+written submission is in
 [`docs/devpost-submission.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/devpost-submission.md),
 with explicit placeholders for the public demo URL and real `/feedback` Session
 ID.

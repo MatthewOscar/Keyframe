@@ -30,6 +30,11 @@ class TranscriptMode(StrEnum):
     NONE = "none"
 
 
+class TranscriptView(StrEnum):
+    EXACT = "exact"
+    COMPACT = "compact"
+
+
 class MomentKind(StrEnum):
     CODE = "code"
     TERMINAL = "terminal"
@@ -48,6 +53,18 @@ class SearchChannel(StrEnum):
 class FrameRegion(StrEnum):
     FULL = "full"
     AUTO_CROP = "auto_crop"
+
+
+class FrameQuality(StrEnum):
+    AUTO = "auto"
+    PROBE = "probe"
+    SOURCE = "source"
+
+
+class FrameEvidenceQuality(StrEnum):
+    RETAINED = "retained"
+    PROBE = "probe"
+    SOURCE = "source"
 
 
 class Chapter(StrictModel):
@@ -179,6 +196,18 @@ class IngestResult(StrictModel):
     status: str
     warnings: tuple[str, ...] = ()
     cache_hit: bool
+    proxy_cached: bool = Field(
+        default=False,
+        description=(
+            "Whether a silent bounded remote-video proxy is currently retained for targeted "
+            "timestamp seeks. False for local sources and when proxy retention is unavailable."
+        ),
+    )
+    proxy_size_bytes: Annotated[int | None, Field(default=None, ge=0)] = None
+    proxy_expires_at: str | None = Field(
+        default=None,
+        description="UTC expiry for the retained proxy; access can extend this LRU/TTL value.",
+    )
     pipeline_version: str = PIPELINE_VERSION
     timings: IngestTimings | None = Field(
         default=None,
@@ -199,6 +228,7 @@ class TranscriptPage(StrictModel):
         ),
     )
     has_more: bool = False
+    view: TranscriptView = TranscriptView.EXACT
 
 
 class MomentSummary(StrictModel):
@@ -277,17 +307,40 @@ class CodeResult(StrictModel):
 
 class FrameResult(StrictModel):
     video_id: str
-    moment_id: str
-    start_s: float = Field(description="Start of the retained frame's represented interval.")
-    end_s: float = Field(description="End of the retained frame's represented interval.")
-    actual_t: float = Field(description="Timestamp of the attached retained source frame.")
+    moment_id: str | None = Field(
+        description=(
+            "Opaque retained-moment ID when the attached image came from the visual index; "
+            "null when Keyframe performed a transient exact seek instead."
+        )
+    )
+    start_s: float = Field(
+        description=(
+            "Start of the retained moment's represented interval, or actual_t for a transient seek."
+        )
+    )
+    end_s: float = Field(
+        description=(
+            "End of the retained moment's represented interval, or actual_t for a transient seek."
+        )
+    )
+    actual_t: float = Field(description="Decoded timestamp of the attached frame.")
     kind: MomentKind
     region: FrameRegion
+    requested_quality: FrameQuality = FrameQuality.AUTO
+    evidence_quality: FrameEvidenceQuality = Field(
+        default=FrameEvidenceQuality.RETAINED,
+        description=(
+            "Actual attached-image provenance: retained visual-index artifact, bounded "
+            "low-resolution probe seek, or source-backed seek."
+        ),
+    )
+    width: Annotated[int, Field(gt=0)]
+    height: Annotated[int, Field(gt=0)]
     classification_confidence: float = 0.0
     ocr_text: str = Field(
         default="",
         description=(
-            "Untrusted heuristic OCR for this exact retained moment. Use as a fallback when the "
+            "Untrusted heuristic OCR for this exact attached frame. Use as a fallback when the "
             "host omits the image; do not describe OCR-only evidence as visual inspection."
         ),
     )
@@ -303,8 +356,9 @@ class FrameResult(StrictModel):
     requested_t_covered: bool | None = Field(
         default=None,
         description=(
-            "Whether requested_t falls inside this moment's retained start_s/end_s interval. "
-            "False under probe coverage is a probe gap and requires a full upgrade for visual claims."
+            "For a retained image, whether requested_t falls inside that moment's start_s/end_s "
+            "interval. True for a successful targeted seek; false means the returned retained "
+            "image does not cover the requested timestamp."
         ),
     )
     visual_coverage: VisualCoverage = VisualCoverage.NONE

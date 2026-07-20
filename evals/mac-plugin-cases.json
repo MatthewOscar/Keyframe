@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.1.4",
+  "suite": "keyframe-mac-plugin-v0.2.0",
   "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, honest Keyframe provenance, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
@@ -47,8 +47,9 @@
         "The source is not split and a staged attachment is not copied a second time",
         "The successful fast ingest reports request-local stage timings",
         "Exactly one 12-moment routing list is used for the fast index generation",
-        "For a 383-segment transcript, exactly two successful transcript calls use the canonical ingest video_id and the returned next_cursor without a restart",
-        "No generic video_search call is made for the whole-video summary"
+        "For a video longer than 30 minutes, video_get_transcript uses view=compact; a 115-minute source fits in one 200-block call",
+        "No generic video_search, transcript fan-out, or unbounded exact-transcript paging is used for the whole-video summary",
+        "At most two probe frames are inspected and fast coverage is not upgraded solely because the video contains a demonstration"
       ]
     },
     {
@@ -58,8 +59,9 @@
         "Finds the spoken anchor where the mentor's fixed work is introduced and retrieves bounded transcript context around it",
         "Runs a channel=shown search with that episode's start_s and end_s; any moment list keeps the same bounds",
         "Rejects the earlier merely considered issue and never joins its identity to the later fixed or merged statement",
-        "If probe coverage does not contain the decisive timestamp, upgrades the same video once to full and refreshes moment IDs",
-        "Calls video_get_frame with the exact full-generation moment_id from the bounded shown result and does not also pass t",
+        "If probe coverage does not contain the decisive timestamp, first calls video_get_frame with that t and quality=auto to use a bounded local/proxy seek",
+        "Uses exactly one of moment_id or t for the decisive frame and reports evidence_quality plus actual_t",
+        "Upgrades the same video once to full only if one targeted seek cannot settle the sequence, then refreshes moment IDs",
         "Uses no whole-transcript or all-moments bulk dump and retrieves only the few local candidates needed",
         "If the attached image is available, inspects it; if the host reports image content omitted, labels the answer OCR-derived and corroborates it with adjacent same-window full-index OCR instead of claiming visual confirmation",
         "Reports the later issue title or number and merged state with the decisive timestamp"

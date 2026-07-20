@@ -27,6 +27,8 @@ from video_context_mcp.errors import ConfigurationError
 DEFAULT_MAX_LOCAL_FILE_BYTES = 20 * 1024**3
 DEFAULT_MAX_REMOTE_FILE_BYTES = 10 * 1024**3
 DEFAULT_MAX_SUBTITLE_BYTES = 20 * 1024**2
+DEFAULT_PROXY_CACHE_TTL_S = 7 * 24 * 60 * 60
+DEFAULT_PROXY_CACHE_BYTES = 2 * 1024**3
 
 
 def _positive_int(
@@ -45,6 +47,27 @@ def _positive_int(
         raise ConfigurationError(f"{name} must be a positive integer, got {raw!r}.") from exc
     if value <= 0:
         raise ConfigurationError(f"{name} must be greater than zero, got {value}.")
+    if maximum is not None and value > maximum:
+        raise ConfigurationError(f"{name} must not exceed {maximum}, got {value}.")
+    return value
+
+
+def _non_negative_int(
+    env: Mapping[str, str],
+    name: str,
+    default: int,
+    *,
+    maximum: int | None = None,
+) -> int:
+    raw = env.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigurationError(f"{name} must be a non-negative integer, got {raw!r}.") from exc
+    if value < 0:
+        raise ConfigurationError(f"{name} must be zero or greater, got {value}.")
     if maximum is not None and value > maximum:
         raise ConfigurationError(f"{name} must not exceed {maximum}, got {value}.")
     return value
@@ -126,6 +149,8 @@ class Settings:
     max_local_file_bytes: int = DEFAULT_MAX_LOCAL_FILE_BYTES
     max_remote_file_bytes: int = DEFAULT_MAX_REMOTE_FILE_BYTES
     max_subtitle_bytes: int = DEFAULT_MAX_SUBTITLE_BYTES
+    proxy_cache_ttl_s: int = DEFAULT_PROXY_CACHE_TTL_S
+    proxy_cache_bytes: int = DEFAULT_PROXY_CACHE_BYTES
     allow_private_urls: bool = False
     allow_temp_uploads: bool = False
 
@@ -144,6 +169,12 @@ class Settings:
         """Private cross-client staging directory for explicitly selected uploads."""
 
         return self.tmp_dir / "uploads"
+
+    @property
+    def proxy_dir(self) -> Path:
+        """Bounded derived-media cache used for exact seeking after fast ingest."""
+
+        return self.cache_dir / "proxies"
 
     @property
     def authorized_local_roots(self) -> tuple[Path, ...]:
@@ -168,7 +199,8 @@ class Settings:
 
         Supported variables are ``KEYFRAME_HOME``, ``KEYFRAME_ALLOWED_ROOTS``
         (``os.pathsep`` separated), executable overrides, duration and byte caps,
-        ``KEYFRAME_ALLOW_PRIVATE_URLS``, and ``KEYFRAME_ALLOW_TEMP_UPLOADS``. Local
+        proxy-cache TTL/quota, ``KEYFRAME_ALLOW_PRIVATE_URLS``, and
+        ``KEYFRAME_ALLOW_TEMP_UPLOADS``. Local
         files are authorized only by explicit configured roots, per-request roots
         advertised by an MCP client, or the private upload staging directory when
         explicitly enabled; process CWD is never trusted implicitly.
@@ -229,6 +261,16 @@ class Settings:
                 "KEYFRAME_MAX_SUBTITLE_BYTES",
                 DEFAULT_MAX_SUBTITLE_BYTES,
             ),
+            proxy_cache_ttl_s=_non_negative_int(
+                values,
+                "KEYFRAME_PROXY_TTL_S",
+                DEFAULT_PROXY_CACHE_TTL_S,
+            ),
+            proxy_cache_bytes=_non_negative_int(
+                values,
+                "KEYFRAME_PROXY_CACHE_BYTES",
+                DEFAULT_PROXY_CACHE_BYTES,
+            ),
             allow_private_urls=_boolean(values, "KEYFRAME_ALLOW_PRIVATE_URLS"),
             allow_temp_uploads=_boolean(values, "KEYFRAME_ALLOW_TEMP_UPLOADS"),
             **executables,
@@ -237,7 +279,7 @@ class Settings:
     def ensure_directories(self) -> None:
         """Create private runtime directories needed by acquisition and storage."""
 
-        for directory in (self.home, self.cache_dir, self.artifacts_dir):
+        for directory in (self.home, self.cache_dir, self.proxy_dir, self.artifacts_dir):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         _ensure_private_temp_directory(self.tmp_dir, label="Keyframe temp namespace")
         if self.allow_temp_uploads:

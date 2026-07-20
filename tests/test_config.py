@@ -25,6 +25,8 @@ def test_settings_resolve_home_roots_and_overrides(tmp_path: Path) -> None:
             "KEYFRAME_MAX_LOCAL_FILE_BYTES": "1234",
             "KEYFRAME_MAX_REMOTE_FILE_BYTES": "5678",
             "KEYFRAME_MAX_SUBTITLE_BYTES": "99",
+            "KEYFRAME_PROXY_TTL_S": "3600",
+            "KEYFRAME_PROXY_CACHE_BYTES": "4096",
             "KEYFRAME_ALLOW_PRIVATE_URLS": "yes",
         },
         cwd=cwd,
@@ -37,6 +39,8 @@ def test_settings_resolve_home_roots_and_overrides(tmp_path: Path) -> None:
     assert settings.max_local_file_bytes == 1234
     assert settings.max_remote_file_bytes == 5678
     assert settings.max_subtitle_bytes == 99
+    assert settings.proxy_cache_ttl_s == 3600
+    assert settings.proxy_cache_bytes == 4096
     assert settings.allow_private_urls is True
 
 
@@ -64,7 +68,13 @@ def test_temp_upload_root_is_explicit_private_and_not_cwd(
     cwd.mkdir()
     monkeypatch.setattr(config_module.tempfile, "tempdir", str(os_temp))
 
-    settings = Settings.from_env({"KEYFRAME_ALLOW_TEMP_UPLOADS": "true"}, cwd=cwd)
+    settings = Settings.from_env(
+        {
+            "KEYFRAME_ALLOW_TEMP_UPLOADS": "true",
+            "KEYFRAME_HOME": str(tmp_path / "home"),
+        },
+        cwd=cwd,
+    )
     settings.ensure_directories()
 
     assert settings.allow_temp_uploads is True
@@ -150,6 +160,7 @@ def test_ensure_directories_creates_runtime_layout(
 
     assert settings.tmp_dir.is_dir()
     assert settings.cache_dir.is_dir()
+    assert settings.proxy_dir.is_dir()
     assert settings.artifacts_dir.is_dir()
     assert settings.tmp_dir.parent == os_temp.resolve()
 
@@ -180,6 +191,8 @@ def test_temp_namespaces_are_isolated_by_keyframe_home(
         ("KEYFRAME_MAX_LOCAL_FILE_BYTES", "many"),
         ("KEYFRAME_ALLOW_PRIVATE_URLS", "sometimes"),
         ("KEYFRAME_ALLOW_TEMP_UPLOADS", "sometimes"),
+        ("KEYFRAME_PROXY_TTL_S", "-1"),
+        ("KEYFRAME_PROXY_CACHE_BYTES", "many"),
         ("KEYFRAME_FFPROBE", "   "),
     ],
 )
@@ -194,3 +207,16 @@ def test_nonexistent_allowed_root_raises(tmp_path: Path) -> None:
             {"KEYFRAME_ALLOWED_ROOTS": str(tmp_path / "missing")},
             cwd=tmp_path,
         )
+
+
+def test_proxy_cache_can_be_disabled_with_zero_values(tmp_path: Path) -> None:
+    settings = Settings.from_env(
+        {
+            "KEYFRAME_HOME": str(tmp_path / "home"),
+            "KEYFRAME_PROXY_TTL_S": "0",
+            "KEYFRAME_PROXY_CACHE_BYTES": "0",
+        }
+    )
+
+    assert settings.proxy_cache_ttl_s == 0
+    assert settings.proxy_cache_bytes == 0

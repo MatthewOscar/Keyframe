@@ -45,12 +45,15 @@ from video_context_mcp.constants import (
     MAX_SEARCH_LIMIT,
     MAX_TRANSCRIPT_LIMIT,
     PIPELINE_VERSION,
+    VISUAL_PROBE_MAX_EDGE,
 )
 from video_context_mcp.cursors import cursor_scope, decode_cursor, encode_cursor
 from video_context_mcp.errors import CacheError, ConfigurationError, ExtractionError, SourceError
 from video_context_mcp.models import (
     Chapter,
     CodeResult,
+    FrameEvidenceQuality,
+    FrameQuality,
     FrameRegion,
     FrameResult,
     IngestMode,
@@ -64,22 +67,27 @@ from video_context_mcp.models import (
     TranscriptMode,
     TranscriptPage,
     TranscriptSegment,
+    TranscriptView,
     VideoRecord,
     VisualCoverage,
     VisualMoment,
 )
+from video_context_mcp.proxy_cache import ProxyCache
 from video_context_mcp.storage import KeyframeStore
 from video_context_mcp.transcription import transcribe_media, whisper_available
 from video_context_mcp.vision import (
-    VisualMoment as ExtractedVisualMoment,
-)
-from video_context_mcp.vision import (
+    StableRun,
     VisualProbePlan,
+    analyze_stable_run,
     auto_crop_text_region,
     encode_image,
     extract_visual_moments,
     extract_visual_probe,
     plan_visual_probe,
+    sample_frames_at_timestamps,
+)
+from video_context_mcp.vision import (
+    VisualMoment as ExtractedVisualMoment,
 )
 
 ProgressCallback = Callable[[float, str], None]
@@ -165,6 +173,7 @@ class KeyframeService:
         self._probe_visuals = probe_visuals
         self._transcribe = transcribe
         self._has_whisper = has_whisper
+        self._proxy_cache = ProxyCache(self.settings)
         self._locks_dir = self.settings.home / "locks"
         self._locks_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._global_ingest_lock = FileLock(str(self._locks_dir / "ingest-global.lock"))
@@ -335,6 +344,21 @@ class KeyframeService:
                             existing_segments,
                             existing_moments,
                         )
+                else:
+                    proxy_warning = self._retain_remote_proxy(acquired, video_id, mode=mode)
+                    if proxy_warning is not None:
+                        existing = existing.model_copy(
+                            update={
+                                "warnings": _unique_strings(
+                                    (*existing.warnings, proxy_warning)
+                                )
+                            }
+                        )
+                        with timings.measure("cache_lookup_s"):
+                            existing_segments = self.store.segments_for_video(existing.video_id)
+                            existing_moments = self.store.moments_for_video(existing.video_id)
+                        with timings.measure("index_commit_s"):
+                            self.store.save_video(existing, existing_segments, existing_moments)
                 return self._ingest_result(existing, cache_hit=True)
 
             transcript_source: Sequence[AcquiredTranscriptSegment] = acquired.transcript
@@ -491,6 +515,9 @@ class KeyframeService:
                     extra_warnings.append("Used local Whisper speech transcription.")
                 segments = self._segments(video_id, transcript_source)
                 self._assert_local_source_unchanged(acquired)
+                proxy_warning = self._retain_remote_proxy(acquired, video_id, mode=mode)
+                if proxy_warning is not None:
+                    extra_warnings.append(proxy_warning)
                 if acquired.owns_media:
                     acquired.cleanup()
                 warnings = _unique_strings((*acquired.warnings, *extra_warnings))
@@ -564,9 +591,14 @@ class KeyframeService:
         end_s: float | None = None,
         cursor: str | None = None,
         limit: int = DEFAULT_TRANSCRIPT_LIMIT,
+        view: TranscriptView = TranscriptView.EXACT,
     ) -> TranscriptPage:
         video = self._require_video(video_id)
         video_id = video.video_id
+        try:
+            selected_view = TranscriptView(view)
+        except ValueError as exc:
+            raise SourceError(f"Unsupported transcript view: {view!r}.") from exc
         _validate_limit(limit, MAX_TRANSCRIPT_LIMIT, "transcript")
         if start_s is not None:
             _validate_timestamp(start_s, "Transcript start_s")
@@ -576,16 +608,36 @@ class KeyframeService:
             raise SourceError("Transcript start_s must not be greater than end_s.")
         scope = cursor_scope(
             "transcript",
-            {"video_id": video_id, "start_s": start_s, "end_s": end_s},
+            {
+                "video_id": video_id,
+                "start_s": start_s,
+                "end_s": end_s,
+                "view": selected_view.value,
+            },
         )
         offset = decode_cursor(cursor, kind="transcript", scope=scope)
-        segments, has_more = self.store.transcript_page(
-            video_id,
-            start_s=start_s,
-            end_s=end_s,
-            offset=offset,
-            limit=limit,
-        )
+        if selected_view is TranscriptView.EXACT:
+            segments, has_more = self.store.transcript_page(
+                video_id,
+                start_s=start_s,
+                end_s=end_s,
+                offset=offset,
+                limit=limit,
+            )
+        else:
+            compact_segments = _compact_transcript_segments(
+                video_id,
+                self.store.segments_for_video(video_id),
+                duration_s=video.duration_s,
+            )
+            compact_segments = [
+                segment
+                for segment in compact_segments
+                if (start_s is None or segment.end_s > start_s)
+                and (end_s is None or segment.start_s <= end_s)
+            ]
+            segments = compact_segments[offset : offset + limit]
+            has_more = offset + len(segments) < len(compact_segments)
         next_cursor = (
             encode_cursor(
                 kind="transcript",
@@ -600,6 +652,7 @@ class KeyframeService:
             segments=tuple(segments),
             next_cursor=next_cursor,
             has_more=has_more,
+            view=selected_view,
         )
 
     def search(
@@ -798,6 +851,8 @@ class KeyframeService:
         moment_id: str | None = None,
         t: float | None = None,
         region: FrameRegion = FrameRegion.FULL,
+        quality: FrameQuality = FrameQuality.AUTO,
+        client_roots: Sequence[Path] = (),
     ) -> VisualPayload[FrameResult]:
         video = self._require_video(video_id)
         video_id = video.video_id
@@ -809,6 +864,10 @@ class KeyframeService:
             selected_region = FrameRegion(region)
         except ValueError as exc:
             raise SourceError(f"Unsupported frame region: {region!r}.") from exc
+        try:
+            selected_quality = FrameQuality(quality)
+        except ValueError as exc:
+            raise SourceError(f"Unsupported frame quality: {quality!r}.") from exc
         if moment_id is not None:
             moment = self.store.get_moment(moment_id)
             if moment is None or moment.video_id != video_id:
@@ -823,6 +882,26 @@ class KeyframeService:
                 code_only=False,
                 tolerance_s=None,
             )
+
+        target_t = moment.actual_t if t is None and moment is not None else t
+        retained_covers_request = (
+            moment is not None
+            and (t is None or moment.start_s <= t <= moment.end_s)
+        )
+        should_seek = selected_quality is not FrameQuality.AUTO or not retained_covers_request
+        if should_seek and target_t is not None:
+            targeted = self._targeted_frame(
+                video,
+                target_t=target_t,
+                requested_moment_id=moment_id,
+                requested_t=t,
+                region=selected_region,
+                quality=selected_quality,
+                client_roots=client_roots,
+            )
+            if targeted is not None:
+                return targeted
+
         if moment is None:
             if video.visual_coverage is VisualCoverage.FULL:
                 raise CacheError(
@@ -831,28 +910,55 @@ class KeyframeService:
                     "change is unlikely to help."
                 )
             raise CacheError(
-                "No retained probe frames are available. Re-ingest this video with mode='full'."
+                "No retained probe frames or seekable proxy are available. Re-ingest this "
+                "video once with mode='fast' and refresh=true to rebuild its bounded proxy, "
+                "or use mode='full'."
             )
+        return self._retained_frame(
+            video,
+            moment,
+            requested_moment_id=moment_id,
+            requested_t=t,
+            region=selected_region,
+            quality=selected_quality,
+        )
+
+    def _retained_frame(
+        self,
+        video: VideoRecord,
+        moment: VisualMoment,
+        *,
+        requested_moment_id: str | None,
+        requested_t: float | None,
+        region: FrameRegion,
+        quality: FrameQuality,
+    ) -> VisualPayload[FrameResult]:
         image_path = (
             moment.crop_path
-            if selected_region is FrameRegion.AUTO_CROP and moment.crop_path is not None
+            if region is FrameRegion.AUTO_CROP and moment.crop_path is not None
             else moment.frame_path
         )
-        image_data, mime_type = self._read_artifact(image_path)
+        image_data, mime_type, width, height = self._read_frame_artifact(image_path)
         return VisualPayload(
             result=FrameResult(
-                video_id=video_id,
+                video_id=video.video_id,
                 moment_id=moment.moment_id,
                 start_s=moment.start_s,
                 end_s=moment.end_s,
-                requested_moment_id=moment_id,
-                requested_t=t,
+                requested_moment_id=requested_moment_id,
+                requested_t=requested_t,
                 requested_t_covered=(
-                    moment.start_s <= t <= moment.end_s if t is not None else None
+                    moment.start_s <= requested_t <= moment.end_s
+                    if requested_t is not None
+                    else None
                 ),
                 actual_t=moment.actual_t,
                 kind=moment.kind,
-                region=selected_region,
+                region=region,
+                requested_quality=quality,
+                evidence_quality=FrameEvidenceQuality.RETAINED,
+                width=width,
+                height=height,
                 classification_confidence=moment.classification_confidence,
                 ocr_text=moment.ocr_text,
                 ocr_confidence=moment.ocr_confidence,
@@ -861,6 +967,122 @@ class KeyframeService:
             image_data=image_data,
             mime_type=mime_type,
         )
+
+    def _targeted_frame(
+        self,
+        video: VideoRecord,
+        *,
+        target_t: float,
+        requested_moment_id: str | None,
+        requested_t: float | None,
+        region: FrameRegion,
+        quality: FrameQuality,
+        client_roots: Sequence[Path],
+    ) -> VisualPayload[FrameResult] | None:
+        source = self._frame_seek_source(video, quality=quality, client_roots=client_roots)
+        if source is None:
+            return None
+        media_path, evidence_quality, max_edge = source
+        with tempfile.TemporaryDirectory(prefix="frame-", dir=self.settings.tmp_dir) as raw_temp:
+            work_dir = Path(raw_temp)
+            sampled = sample_frames_at_timestamps(
+                media_path,
+                work_dir,
+                (target_t,),
+                max_edge=max_edge,
+                ffmpeg_binary=self.settings.ffmpeg_executable,
+                workers=1,
+            )
+            if not sampled:
+                raise ExtractionError(
+                    f"No frame was decoded at {target_t:.3f}s from the seekable media."
+                )
+            sample = sampled[0]
+            analyzed = analyze_stable_run(
+                StableRun(
+                    start_s=sample.timestamp_s,
+                    end_s=sample.timestamp_s,
+                    stable_seconds=0.0,
+                    frames=(sample,),
+                    representative=sample,
+                ),
+                node_binary=self.settings.node_executable,
+                tesseract_binary=self.settings.tesseract_executable,
+            )
+            image: Image.Image | Path = analyzed.frame_path
+            if region is FrameRegion.AUTO_CROP:
+                image, _ = auto_crop_text_region(analyzed.frame_path, analyzed.ocr)
+            encoded = encode_image(image)
+
+        return VisualPayload(
+            result=FrameResult(
+                video_id=video.video_id,
+                moment_id=None,
+                start_s=sample.timestamp_s,
+                end_s=sample.timestamp_s,
+                actual_t=sample.timestamp_s,
+                kind=MomentKind(analyzed.kind),
+                region=region,
+                requested_quality=quality,
+                evidence_quality=evidence_quality,
+                width=encoded.width,
+                height=encoded.height,
+                classification_confidence=analyzed.kind_confidence,
+                ocr_text=analyzed.ocr.text,
+                ocr_confidence=analyzed.ocr.confidence,
+                requested_moment_id=requested_moment_id,
+                requested_t=requested_t,
+                requested_t_covered=True if requested_t is not None else None,
+                visual_coverage=video.visual_coverage,
+            ),
+            image_data=encoded.data,
+            mime_type=encoded.mime_type,
+        )
+
+    def _frame_seek_source(
+        self,
+        video: VideoRecord,
+        *,
+        quality: FrameQuality,
+        client_roots: Sequence[Path],
+    ) -> tuple[Path, FrameEvidenceQuality, int] | None:
+        if video.source_kind == SourceKind.LOCAL.value:
+            if video.local_source_path is None:
+                if quality is FrameQuality.SOURCE:
+                    raise CacheError(
+                        "Source-quality frame retrieval requires the indexed local source path, "
+                        "but this cache entry does not contain one. Re-ingest the local video."
+                    )
+                return None
+            request_settings = self._settings_with_client_roots(client_roots)
+            try:
+                local_source = validate_local_path(video.local_source_path, request_settings)
+            except SourceError:
+                if quality is FrameQuality.SOURCE:
+                    raise
+                return None
+            if not self._cache_source_is_current(video):
+                if quality is FrameQuality.SOURCE:
+                    raise CacheError(
+                        "The indexed local source changed or disappeared. Re-ingest it before "
+                        "requesting a source-quality frame."
+                    )
+                return None
+            if quality is FrameQuality.PROBE:
+                return local_source, FrameEvidenceQuality.PROBE, VISUAL_PROBE_MAX_EDGE
+            return local_source, FrameEvidenceQuality.SOURCE, MAX_IMAGE_EDGE
+
+        if quality is FrameQuality.SOURCE:
+            raise SourceError(
+                "Source-quality targeted frames are unavailable for remote videos: Keyframe "
+                "does not let FFmpeg fetch remote URLs outside its validated acquisition path. "
+                "Use quality='auto' or quality='probe' for the retained bounded proxy, or "
+                "re-ingest with mode='full' for broader retained coverage."
+            )
+        proxy = self._proxy_cache.get(video.video_id, touch=True)
+        if proxy is None:
+            return None
+        return proxy.path, FrameEvidenceQuality.PROBE, VISUAL_PROBE_MAX_EDGE
 
     def _extract_and_publish(
         self,
@@ -991,6 +1213,10 @@ class KeyframeService:
                 shutil.rmtree(staged_run, ignore_errors=True)
 
     def _read_artifact(self, relative_path: str) -> tuple[bytes, str]:
+        data, mime_type, _width, _height = self._read_frame_artifact(relative_path)
+        return data, mime_type
+
+    def _read_frame_artifact(self, relative_path: str) -> tuple[bytes, str, int, int]:
         candidate = (self.settings.home / relative_path).resolve(strict=False)
         artifacts_root = self.settings.artifacts_dir.resolve(strict=False)
         if not candidate.is_relative_to(artifacts_root):
@@ -1014,7 +1240,8 @@ class KeyframeService:
                     )
                 if image.format != "JPEG":
                     raise CacheError("Cached image is not a validated JPEG artifact.")
-            return candidate.read_bytes(), "image/jpeg"
+                width, height = image.size
+            return candidate.read_bytes(), "image/jpeg", width, height
         except CacheError:
             raise
         except (OSError, UnidentifiedImageError) as exc:
@@ -1168,12 +1395,22 @@ class KeyframeService:
             and current.st_mtime_ns == video.local_source_mtime_ns
         )
 
-    @staticmethod
     def _ingest_result(
+        self,
         video: VideoRecord,
         *,
         cache_hit: bool,
     ) -> IngestResult:
+        proxy = None
+        if video.source_kind != SourceKind.LOCAL.value:
+            try:
+                proxy = self._proxy_cache.get(video.video_id)
+            except CacheError:
+                logger.warning(
+                    "Could not inspect retained proxy for %s",
+                    video.video_id,
+                    exc_info=True,
+                )
         return IngestResult(
             video_id=video.video_id,
             title=video.title,
@@ -1190,8 +1427,50 @@ class KeyframeService:
             status=video.status,
             warnings=video.warnings,
             cache_hit=cache_hit,
+            proxy_cached=proxy is not None,
+            proxy_size_bytes=proxy.size_bytes if proxy is not None else None,
+            proxy_expires_at=proxy.expires_at if proxy is not None else None,
             pipeline_version=video.pipeline_version,
         )
+
+    def _retain_remote_proxy(
+        self,
+        acquired: AcquiredSource,
+        video_id: str,
+        *,
+        mode: IngestMode,
+    ) -> str | None:
+        """Retain only fast, owned remote probe media after every consumer is finished."""
+
+        if (
+            mode is not IngestMode.FAST
+            or acquired.metadata.kind is SourceKind.LOCAL
+            or acquired.media_profile not in {"probe_video", "probe_av"}
+            or not acquired.owns_media
+            or acquired.media_path is None
+        ):
+            return None
+        try:
+            proxy = self._proxy_cache.promote(
+                video_id,
+                acquired.media_path,
+                contains_audio=acquired.media_contains_audio,
+                ffmpeg_binary=self.settings.ffmpeg_executable,
+            )
+        except CacheError as exc:
+            logger.warning("Could not retain bounded proxy for %s: %s", video_id, exc)
+            return (
+                "The fast visual index is ready, but its bounded seek proxy could not be "
+                f"retained: {exc} Targeted remote timestamps may require refresh=true or a "
+                "full visual upgrade."
+            )
+        if proxy is None and self._proxy_cache.enabled:
+            return (
+                "The fast visual index is ready, but its downloaded probe exceeded the proxy "
+                "cache quota and was not retained. Targeted remote timestamps may require "
+                "refresh=true or a full visual upgrade."
+            )
+        return None
 
     def _require_video(self, video_id: str) -> VideoRecord:
         video = self.store.get_video(video_id)
@@ -1234,6 +1513,10 @@ class KeyframeService:
                             shutil.rmtree(run_dir, ignore_errors=True)
                     with suppress(OSError):
                         video_dir.rmdir()
+                try:
+                    self._proxy_cache.prune()
+                except (CacheError, OSError):
+                    logger.warning("Could not prune the bounded proxy cache", exc_info=True)
         except Timeout:
             # Another process is actively ingesting into this KEYFRAME_HOME.
             # Its own completion or a later process startup will perform cleanup.
@@ -1317,6 +1600,87 @@ def _validate_time_range(start_s: float | None, end_s: float | None, label: str)
         _validate_timestamp(end_s, f"{label} end_s")
     if start_s is not None and end_s is not None and start_s > end_s:
         raise SourceError(f"{label} start_s must not be greater than end_s.")
+
+
+_COMPACT_TRANSCRIPT_BIN_SECONDS = 60.0
+_AUTOMATIC_CAPTION_SOURCE = "automatic_captions"
+_CAPTION_TOKEN_EDGE_RE = re.compile(r"^[^\w]+|[^\w]+$")
+
+
+def _compact_transcript_segments(
+    video_id: str,
+    segments: Sequence[TranscriptSegment],
+    *,
+    duration_s: float,
+) -> list[TranscriptSegment]:
+    """Build deterministic minute blocks from exact cached transcript cues.
+
+    Automatic-caption WebVTT commonly repeats a rolling window of words in
+    overlapping cues. Compare only neighboring overlapping automatic cues so
+    ordinary repeated speech in manual captions, Whisper output, or consecutive
+    non-overlapping cues remains intact.
+    """
+
+    tokens_by_bin: dict[int, list[str]] = {}
+    sources_by_bin: dict[int, list[str]] = {}
+    previous_tokens: list[str] = []
+    previous_segment: TranscriptSegment | None = None
+
+    for segment in segments:
+        cue_tokens = segment.text.split()
+        if not cue_tokens:
+            continue
+        overlap = 0
+        if (
+            previous_segment is not None
+            and segment.source == _AUTOMATIC_CAPTION_SOURCE
+            and previous_segment.source == _AUTOMATIC_CAPTION_SOURCE
+            and segment.start_s < previous_segment.end_s
+        ):
+            overlap = _caption_token_overlap(previous_tokens, cue_tokens)
+
+        contribution = cue_tokens[overlap:]
+        if contribution:
+            bin_index = max(0, math.floor(segment.start_s / _COMPACT_TRANSCRIPT_BIN_SECONDS))
+            tokens_by_bin.setdefault(bin_index, []).extend(contribution)
+            sources_by_bin.setdefault(bin_index, []).append(segment.source)
+        previous_tokens = cue_tokens
+        previous_segment = segment
+
+    if not tokens_by_bin:
+        return []
+
+    transcript_end_s = max(duration_s, max(segment.end_s for segment in segments))
+    compact: list[TranscriptSegment] = []
+    for bin_index in sorted(tokens_by_bin):
+        bin_start_s = bin_index * _COMPACT_TRANSCRIPT_BIN_SECONDS
+        bin_end_s = min(bin_start_s + _COMPACT_TRANSCRIPT_BIN_SECONDS, transcript_end_s)
+        sources = sources_by_bin[bin_index]
+        source = sources[0] if all(value == sources[0] for value in sources) else "mixed"
+        compact.append(
+            TranscriptSegment(
+                segment_id=f"{video_id}:compact:{bin_index}",
+                start_s=bin_start_s,
+                end_s=max(bin_start_s, bin_end_s),
+                text=" ".join(tokens_by_bin[bin_index]),
+                source=source,
+            )
+        )
+    return compact
+
+
+def _caption_token_overlap(previous: Sequence[str], current: Sequence[str]) -> int:
+    previous_normalized = [_normalize_caption_token(token) for token in previous]
+    current_normalized = [_normalize_caption_token(token) for token in current]
+    for length in range(min(len(previous), len(current)), 0, -1):
+        if previous_normalized[-length:] == current_normalized[:length]:
+            return length
+    return 0
+
+
+def _normalize_caption_token(token: str) -> str:
+    stripped = _CAPTION_TOKEN_EDGE_RE.sub("", token.casefold())
+    return stripped or token.casefold()
 
 
 def _preview(text: str, *, length: int = 240) -> str:

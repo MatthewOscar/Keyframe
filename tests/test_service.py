@@ -25,21 +25,25 @@ from video_context_mcp.constants import (
     MAX_IMAGE_BYTES,
     MAX_IMAGE_EDGE,
     PIPELINE_VERSION,
+    VISUAL_PROBE_MAX_EDGE,
 )
 from video_context_mcp.cursors import CursorError
 from video_context_mcp.errors import CacheError, ExtractionError, SourceError
 from video_context_mcp.models import (
+    FrameEvidenceQuality,
+    FrameQuality,
     IngestMode,
     MomentKind,
     SearchChannel,
     TranscriptMode,
+    TranscriptView,
     VideoRecord,
     VisualCoverage,
     VisualMoment,
 )
 from video_context_mcp.service import KeyframeService
 from video_context_mcp.storage import KeyframeStore
-from video_context_mcp.vision import BoundingBox, OCRLine, OCRResult
+from video_context_mcp.vision import BoundingBox, OCRLine, OCRResult, SampledFrame
 from video_context_mcp.vision import VisualMoment as ExtractedVisualMoment
 
 
@@ -99,6 +103,21 @@ def _fake_acquirer(
         )
 
     return acquire, calls
+
+
+def _fake_timed_acquirer(
+    segments: tuple[AcquiredTranscriptSegment, ...],
+    *,
+    duration_s: float,
+) -> Callable[..., AcquiredSource]:
+    base_acquire, _calls = _fake_acquirer(duration_s=duration_s)
+
+    def acquire(source: str, settings: Settings, **kwargs: object) -> AcquiredSource:
+        acquired = base_acquire(source, settings, **kwargs)
+        acquired.transcript = segments
+        return acquired
+
+    return acquire
 
 
 def _fake_visual_extractor(
@@ -169,6 +188,59 @@ def _fake_probe_extractor(
         ]
 
     return extract
+
+
+def _install_targeted_frame_fakes(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    observed_max_edges: list[int] | None = None,
+) -> None:
+    def sample(
+        _media_path: Path,
+        work_dir: Path,
+        timestamps_s: tuple[float, ...],
+        *,
+        max_edge: int,
+        **_kwargs: object,
+    ) -> list[SampledFrame]:
+        if observed_max_edges is not None:
+            observed_max_edges.append(max_edge)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        frame = work_dir / "targeted.jpg"
+        Image.new("RGB", (640, 360), (21, 34, 55)).save(frame, format="JPEG")
+        return [SampledFrame(timestamps_s[0], frame, "0" * 16)]
+
+    def analyze(run: object, **_kwargs: object) -> ExtractedVisualMoment:
+        representative = run.representative  # type: ignore[attr-defined]
+        line = OCRLine(
+            text="targeted evidence",
+            indent_spaces=0,
+            confidence=0.93,
+            box=BoundingBox(left=20, top=20, width=240, height=30),
+        )
+        ocr = OCRResult(
+            text=line.text,
+            lines=(line,),
+            confidence=0.93,
+            source_width=640,
+            source_height=360,
+        )
+        return ExtractedVisualMoment(
+            timestamp_s=representative.timestamp_s,
+            start_s=representative.timestamp_s,
+            end_s=representative.timestamp_s,
+            stable_seconds=0,
+            frame_path=representative.path,
+            kind="slide",
+            kind_confidence=0.86,
+            ocr=ocr,
+            language=None,
+            parses=None,
+            crop_box=BoundingBox(left=20, top=20, width=240, height=30),
+        )
+
+    monkeypatch.setattr(service_module, "sample_frames_at_timestamps", sample)
+    monkeypatch.setattr(service_module, "analyze_stable_run", analyze)
 
 
 def _service(
@@ -427,6 +499,104 @@ def test_total_timing_includes_cleanup_after_remote_fingerprint_hit(
     assert alias.timings.visual_ms is None
     assert alias.timings.transcription_ms is None
     assert alias.timings.index_commit_ms is None
+
+
+def test_fast_remote_ingest_retains_bounded_proxy_and_reports_it(tmp_path: Path) -> None:
+    settings, _source_root = _settings(tmp_path)
+    owned_dir = settings.tmp_dir / "acquire-owned"
+    media = owned_dir / "probe.mp4"
+    media_bytes = b"silent low-resolution proxy"
+
+    def acquire(source: str, _settings: Settings, **_kwargs: object) -> AcquiredSource:
+        owned_dir.mkdir(parents=True, exist_ok=True)
+        media.write_bytes(media_bytes)
+        return AcquiredSource(
+            metadata=SourceMetadata(
+                source=source,
+                kind=SourceKind.YOUTUBE,
+                video_id="retained-proxy",
+                title="Remote proxy fixture",
+                duration_s=10,
+                provider="youtube",
+                has_audio=False,
+            ),
+            transcript=(AcquiredTranscriptSegment(0, 1, "remote evidence"),),
+            media_path=media,
+            owns_media=True,
+            media_profile="probe_video",
+            media_contains_audio=False,
+            _temp_dir=owned_dir,
+        )
+
+    service = _service(settings, acquire)
+    first = service.ingest(
+        "https://www.youtube.com/watch?v=retained-proxy",
+        mode=IngestMode.FAST,
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+
+    assert first.proxy_cached is True
+    assert first.proxy_size_bytes == len(media_bytes)
+    assert first.proxy_expires_at is not None
+    assert not owned_dir.exists()
+    proxy = service._proxy_cache.get(first.video_id)
+    assert proxy is not None
+    assert proxy.path.read_bytes() == media_bytes
+
+    cached = service.ingest(
+        "https://www.youtube.com/watch?v=retained-proxy",
+        mode=IngestMode.FAST,
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+    assert cached.cache_hit is True
+    assert cached.proxy_cached is True
+    assert cached.proxy_size_bytes == len(media_bytes)
+
+
+def test_proxy_publication_failure_does_not_fail_remote_ingest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings, _source_root = _settings(tmp_path)
+    owned_dir = settings.tmp_dir / "acquire-owned"
+    media = owned_dir / "probe.mp4"
+
+    def acquire(source: str, _settings: Settings, **_kwargs: object) -> AcquiredSource:
+        owned_dir.mkdir(parents=True, exist_ok=True)
+        media.write_bytes(b"probe")
+        return AcquiredSource(
+            metadata=SourceMetadata(
+                source=source,
+                kind=SourceKind.YOUTUBE,
+                video_id="proxy-failure",
+                title="Remote proxy failure fixture",
+                duration_s=10,
+                provider="youtube",
+                has_audio=False,
+            ),
+            transcript=(AcquiredTranscriptSegment(0, 1, "remote evidence"),),
+            media_path=media,
+            owns_media=True,
+            media_profile="probe_video",
+            _temp_dir=owned_dir,
+        )
+
+    service = _service(settings, acquire)
+
+    def fail_promote(*_args: object, **_kwargs: object) -> None:
+        raise CacheError("simulated cache failure")
+
+    monkeypatch.setattr(service._proxy_cache, "promote", fail_promote)
+    result = service.ingest(
+        "https://www.youtube.com/watch?v=proxy-failure",
+        mode=IngestMode.FAST,
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+
+    assert result.status == "ready"
+    assert result.proxy_cached is False
+    assert any("simulated cache failure" in warning for warning in result.warnings)
+    assert not owned_dir.exists()
 
 
 def test_fast_refresh_preserves_a_previously_published_full_visual_index(tmp_path: Path) -> None:
@@ -777,6 +947,199 @@ def test_default_transcript_pages_cover_383_segments_in_two_calls(tmp_path: Path
     assert recovered.segments == first.segments
 
 
+def test_compact_transcript_deoverlaps_only_rolling_automatic_captions(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire = _fake_timed_acquirer(
+        (
+            AcquiredTranscriptSegment(
+                0,
+                4,
+                "we are building",
+                origin="automatic_captions",
+            ),
+            AcquiredTranscriptSegment(
+                2,
+                6,
+                "are building a very",
+                origin="automatic_captions",
+            ),
+            AcquiredTranscriptSegment(
+                4,
+                8,
+                "a very very fast PC",
+                origin="automatic_captions",
+            ),
+            AcquiredTranscriptSegment(8, 9, "yes", origin="automatic_captions"),
+            AcquiredTranscriptSegment(9, 10, "yes", origin="automatic_captions"),
+        ),
+        duration_s=10,
+    )
+    service = _service(settings, acquire)
+    ingested = service.ingest(
+        str(source),
+        mode=IngestMode.FAST,
+        transcript_mode=TranscriptMode.AUTO,
+    )
+
+    exact = service.get_transcript(ingested.video_id)
+    compact = service.get_transcript(ingested.video_id, view=TranscriptView.COMPACT)
+
+    assert exact.view is TranscriptView.EXACT
+    assert [segment.text for segment in exact.segments] == [
+        "we are building",
+        "are building a very",
+        "a very very fast PC",
+        "yes",
+        "yes",
+    ]
+    assert compact.view is TranscriptView.COMPACT
+    assert len(compact.segments) == 1
+    assert compact.segments[0].text == "we are building a very very fast PC yes yes"
+    assert compact.segments[0].segment_id == f"{ingested.video_id}:compact:0"
+
+
+def test_compact_transcript_preserves_repetition_outside_automatic_rolls(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire = _fake_timed_acquirer(
+        (
+            AcquiredTranscriptSegment(0, 3, "repeat this", origin="captions"),
+            AcquiredTranscriptSegment(2, 4, "repeat this", origin="captions"),
+            AcquiredTranscriptSegment(4, 5, "again", origin="whisper"),
+            AcquiredTranscriptSegment(5, 6, "again", origin="whisper"),
+        ),
+        duration_s=6,
+    )
+    service = _service(settings, acquire)
+    ingested = service.ingest(str(source), transcript_mode=TranscriptMode.CAPTIONS)
+
+    compact = service.get_transcript(ingested.video_id, view="compact")
+
+    assert compact.segments[0].text == "repeat this repeat this again again"
+    assert compact.segments[0].source == "mixed"
+
+
+def test_compact_transcript_time_bounds_select_minute_bins(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire = _fake_timed_acquirer(
+        (
+            AcquiredTranscriptSegment(10, 11, "minute zero"),
+            AcquiredTranscriptSegment(70, 71, "minute one"),
+            AcquiredTranscriptSegment(130, 131, "minute two"),
+        ),
+        duration_s=180,
+    )
+    service = _service(settings, acquire)
+    ingested = service.ingest(str(source), transcript_mode=TranscriptMode.CAPTIONS)
+
+    compact = service.get_transcript(
+        ingested.video_id,
+        view=TranscriptView.COMPACT,
+        start_s=60,
+        end_s=119,
+    )
+
+    assert [(segment.start_s, segment.end_s, segment.text) for segment in compact.segments] == [
+        (60, 120, "minute one")
+    ]
+
+
+def test_transcript_cursor_cannot_cross_exact_and_compact_views(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire = _fake_timed_acquirer(
+        (
+            AcquiredTranscriptSegment(1, 2, "first"),
+            AcquiredTranscriptSegment(61, 62, "second"),
+        ),
+        duration_s=120,
+    )
+    service = _service(settings, acquire)
+    ingested = service.ingest(str(source), transcript_mode=TranscriptMode.CAPTIONS)
+
+    compact = service.get_transcript(
+        ingested.video_id,
+        view=TranscriptView.COMPACT,
+        limit=1,
+    )
+    exact = service.get_transcript(ingested.video_id, limit=1)
+    assert compact.next_cursor is not None
+    assert exact.next_cursor is not None
+
+    with pytest.raises(CursorError, match="does not match"):
+        service.get_transcript(
+            ingested.video_id,
+            view=TranscriptView.EXACT,
+            cursor=compact.next_cursor,
+            limit=1,
+        )
+    with pytest.raises(CursorError, match="does not match"):
+        service.get_transcript(
+            ingested.video_id,
+            view=TranscriptView.COMPACT,
+            cursor=exact.next_cursor,
+            limit=1,
+        )
+
+
+def test_6889_second_compact_transcript_fits_one_maximum_page(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire = _fake_timed_acquirer(
+        tuple(
+            AcquiredTranscriptSegment(second, second + 0.5, f"word-{second}")
+            for second in range(6_889)
+        ),
+        duration_s=6_889,
+    )
+    service = _service(settings, acquire)
+    ingested = service.ingest(str(source), transcript_mode=TranscriptMode.CAPTIONS)
+
+    compact = service.get_transcript(ingested.video_id, view=TranscriptView.COMPACT)
+
+    assert compact.view is TranscriptView.COMPACT
+    assert len(compact.segments) == 115
+    assert compact.has_more is False
+    assert compact.next_cursor is None
+    assert compact.segments[0].start_s == 0
+    assert compact.segments[-1].start_s == 6_840
+    assert compact.segments[-1].end_s == 6_889
+
+
+def test_compact_transcript_paginates_more_than_200_minute_blocks(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire = _fake_timed_acquirer(
+        tuple(
+            AcquiredTranscriptSegment(minute * 60, minute * 60 + 1, f"minute-{minute}")
+            for minute in range(201)
+        ),
+        duration_s=12_060,
+    )
+    service = _service(settings, acquire)
+    ingested = service.ingest(str(source), transcript_mode=TranscriptMode.CAPTIONS)
+
+    first = service.get_transcript(ingested.video_id, view=TranscriptView.COMPACT)
+    assert len(first.segments) == 200
+    assert first.has_more is True
+    assert first.next_cursor is not None
+
+    second = service.get_transcript(
+        ingested.video_id,
+        view=TranscriptView.COMPACT,
+        cursor=first.next_cursor,
+    )
+    assert [segment.text for segment in second.segments] == ["minute-200"]
+    assert second.has_more is False
+    assert second.next_cursor is None
+
+
 def test_local_video_id_typo_recovery_refuses_ambiguous_match(tmp_path: Path) -> None:
     settings, source_root = _settings(tmp_path)
     source = _source_file(source_root)
@@ -919,6 +1282,9 @@ def test_get_frame_round_trips_an_exact_moment_and_keeps_timestamp_compatibility
     assert exact.result.ocr_text == stored.ocr_text
     assert exact.result.ocr_confidence == stored.ocr_confidence
     assert exact.result.classification_confidence == stored.classification_confidence
+    assert exact.result.requested_quality is FrameQuality.AUTO
+    assert exact.result.evidence_quality is FrameEvidenceQuality.RETAINED
+    assert (exact.result.width, exact.result.height) == (320, 180)
     assert exact.image_data
 
     timestamp = service.get_frame(ingested.video_id, t=2.0)
@@ -953,6 +1319,157 @@ def test_get_frame_round_trips_an_exact_moment_and_keeps_timestamp_compatibility
     )
     with pytest.raises(CacheError, match="was not found in video"):
         service.get_frame(other_video_id, moment_id=exact_id)
+
+
+def test_frame_auto_seeks_an_authorized_local_source_for_a_probe_gap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    ingested = service.ingest(
+        str(source), mode=IngestMode.FAST, transcript_mode=TranscriptMode.CAPTIONS
+    )
+    observed_max_edges: list[int] = []
+    _install_targeted_frame_fakes(monkeypatch, observed_max_edges=observed_max_edges)
+
+    frame = service.get_frame(ingested.video_id, t=7.0)
+
+    assert frame.result.moment_id is None
+    assert frame.result.requested_t == 7.0
+    assert frame.result.requested_t_covered is True
+    assert frame.result.actual_t == 7.0
+    assert frame.result.evidence_quality is FrameEvidenceQuality.SOURCE
+    assert frame.result.requested_quality is FrameQuality.AUTO
+    assert (frame.result.width, frame.result.height) == (640, 360)
+    assert frame.result.ocr_text == "targeted evidence"
+    assert observed_max_edges == [MAX_IMAGE_EDGE]
+
+
+def test_frame_probe_quality_forces_a_bounded_local_seek(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    ingested = service.ingest(
+        str(source), mode=IngestMode.FAST, transcript_mode=TranscriptMode.CAPTIONS
+    )
+    observed_max_edges: list[int] = []
+    _install_targeted_frame_fakes(monkeypatch, observed_max_edges=observed_max_edges)
+
+    frame = service.get_frame(ingested.video_id, t=2.0, quality=FrameQuality.PROBE)
+
+    assert frame.result.moment_id is None
+    assert frame.result.evidence_quality is FrameEvidenceQuality.PROBE
+    assert frame.result.requested_quality is FrameQuality.PROBE
+    assert observed_max_edges == [VISUAL_PROBE_MAX_EDGE]
+
+
+def test_frame_auto_seeks_a_retained_remote_proxy_for_a_probe_gap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings, _source_root = _settings(tmp_path)
+    acquire, _calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    run_dir = settings.artifacts_dir / "video" / "manual"
+    run_dir.mkdir(parents=True)
+    retained = run_dir / "frame.jpg"
+    Image.new("RGB", (100, 50), "black").save(retained, format="JPEG")
+    _seed_artifact_moment(service, relative_path=str(retained.relative_to(settings.home)))
+    video = service.store.get_video("video")
+    moment = service.store.get_moment("video:m:0")
+    assert video is not None and moment is not None
+    service.store.save_video(
+        video.model_copy(
+            update={
+                "source": "https://www.youtube.com/watch?v=fixture",
+                "source_kind": "youtube",
+                "duration_s": 10,
+            }
+        ),
+        (),
+        (moment,),
+    )
+    proxy_dir = settings.proxy_dir / "video"
+    proxy_dir.mkdir(parents=True)
+    (proxy_dir / "media.mp4").write_bytes(b"bounded proxy")
+    observed_max_edges: list[int] = []
+    _install_targeted_frame_fakes(monkeypatch, observed_max_edges=observed_max_edges)
+
+    frame = service.get_frame("video", t=7.0)
+
+    assert frame.result.moment_id is None
+    assert frame.result.evidence_quality is FrameEvidenceQuality.PROBE
+    assert frame.result.requested_quality is FrameQuality.AUTO
+    assert observed_max_edges == [VISUAL_PROBE_MAX_EDGE]
+
+
+def test_remote_source_quality_is_rejected_without_opening_remote_ffmpeg_access(
+    tmp_path: Path,
+) -> None:
+    settings, _source_root = _settings(tmp_path)
+    acquire, _calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    run_dir = settings.artifacts_dir / "video" / "manual"
+    run_dir.mkdir(parents=True)
+    retained = run_dir / "frame.jpg"
+    Image.new("RGB", (100, 50), "black").save(retained, format="JPEG")
+    _seed_artifact_moment(service, relative_path=str(retained.relative_to(settings.home)))
+    video = service.store.get_video("video")
+    moment = service.store.get_moment("video:m:0")
+    assert video is not None and moment is not None
+    service.store.save_video(
+        video.model_copy(
+            update={
+                "source": "https://www.youtube.com/watch?v=fixture",
+                "source_kind": "youtube",
+            }
+        ),
+        (),
+        (moment,),
+    )
+
+    with pytest.raises(SourceError, match="does not let FFmpeg fetch remote URLs"):
+        service.get_frame("video", t=1.0, quality=FrameQuality.SOURCE)
+
+
+def test_frame_auto_preserves_nearest_retained_fallback_without_a_proxy(
+    tmp_path: Path,
+) -> None:
+    settings, _source_root = _settings(tmp_path)
+    acquire, _calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    run_dir = settings.artifacts_dir / "video" / "manual"
+    run_dir.mkdir(parents=True)
+    retained = run_dir / "frame.jpg"
+    Image.new("RGB", (100, 50), "black").save(retained, format="JPEG")
+    _seed_artifact_moment(service, relative_path=str(retained.relative_to(settings.home)))
+    video = service.store.get_video("video")
+    moment = service.store.get_moment("video:m:0")
+    assert video is not None and moment is not None
+    service.store.save_video(
+        video.model_copy(
+            update={
+                "source": "https://www.youtube.com/watch?v=fixture",
+                "source_kind": "youtube",
+                "duration_s": 10,
+            }
+        ),
+        (),
+        (moment,),
+    )
+
+    frame = service.get_frame("video", t=7.0)
+
+    assert frame.result.moment_id == moment.moment_id
+    assert frame.result.requested_t_covered is False
+    assert frame.result.evidence_quality is FrameEvidenceQuality.RETAINED
 
 
 def test_visual_time_bounds_exclude_disjoint_candidates_and_scope_cursors(
@@ -1454,8 +1971,9 @@ def test_full_gif_sampling_cap_holds_for_long_sources(tmp_path: Path) -> None:
     assert sample_fps * duration_s <= GIF_FULL_MAX_SAMPLES + 1e-9
 
 
-def test_zero_moment_full_whisper_reports_both_outcomes_and_actionable_read_errors(
+def test_zero_moment_full_whisper_reports_both_outcomes_and_can_seek_source_frame(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings, source_root = _settings(tmp_path)
     source = _source_file(source_root)
@@ -1493,8 +2011,10 @@ def test_zero_moment_full_whisper_reports_both_outcomes_and_actionable_read_erro
     assert "Used local Whisper speech transcription." in result.warnings
     with pytest.raises(CacheError, match="full visual index"):
         service.get_code(result.video_id, t=1)
-    with pytest.raises(CacheError, match="Full visual indexing completed"):
-        service.get_frame(result.video_id, t=1)
+    _install_targeted_frame_fakes(monkeypatch)
+    frame = service.get_frame(result.video_id, t=1)
+    assert frame.result.evidence_quality is FrameEvidenceQuality.SOURCE
+    assert frame.result.moment_id is None
 
 
 def test_failed_parallel_whisper_removes_visual_run_and_publishes_nothing(

@@ -11,6 +11,8 @@ from pydantic import ValidationError
 from video_context_mcp.errors import SourceError
 from video_context_mcp.models import (
     CodeResult,
+    FrameEvidenceQuality,
+    FrameQuality,
     FrameRegion,
     FrameResult,
     IngestMode,
@@ -23,6 +25,7 @@ from video_context_mcp.models import (
     SearchPage,
     StrictModel,
     TranscriptPage,
+    TranscriptView,
 )
 from video_context_mcp.server import _client_roots, _root_uri_to_path, create_server
 
@@ -90,6 +93,8 @@ class FakeService:
                 actual_t=1,
                 kind=MomentKind.CODE,
                 region=FrameRegion.FULL,
+                width=320,
+                height=180,
                 classification_confidence=0.88,
                 ocr_text="print('hello')",
                 ocr_confidence=0.9,
@@ -208,11 +213,20 @@ def test_exact_tool_surface_and_annotations() -> None:
     transcript_limit = transcript_tool.parameters["properties"]["limit"]
     assert transcript_limit["default"] == 200
     assert transcript_limit["maximum"] == 200
-    assert "fewest safe pages" in transcript_limit["description"]
+    assert "200 minutes" in transcript_limit["description"]
+    transcript_view = transcript_tool.parameters["properties"]["view"]
+    assert transcript_view["default"] == "exact"
+    transcript_view_definition = transcript_tool.parameters["$defs"]["TranscriptView"]
+    assert transcript_view_definition["enum"] == ["exact", "compact"]
+    assert transcript_tool.output_schema["properties"]["view"]["default"] == "exact"
     transcript_video_id = transcript_tool.parameters["properties"]["video_id"]
     assert "byte-for-byte" in transcript_video_id["description"]
     ingest_video_id = tools["video_ingest"].output_schema["properties"]["video_id"]
     assert "byte-for-byte" in ingest_video_id["description"]
+    ingest_output = tools["video_ingest"].output_schema["properties"]
+    assert ingest_output["proxy_cached"]["default"] is False
+    assert "targeted timestamp seeks" in ingest_output["proxy_cached"]["description"]
+    assert {"proxy_size_bytes", "proxy_expires_at"} <= ingest_output.keys()
     assert "instead of searching plugin caches" in server.instructions
     assert "exact structured video_id byte-for-byte" in server.instructions
     for name in ("video_search", "video_list_moments"):
@@ -228,6 +242,12 @@ def test_exact_tool_surface_and_annotations() -> None:
     frame_required = set(frame_tool.parameters["required"])
     assert {"moment_id", "t"} <= frame_properties.keys()
     assert {"moment_id", "t"}.isdisjoint(frame_required)
+    assert frame_properties["quality"]["default"] == "auto"
+    assert frame_tool.parameters["$defs"]["FrameQuality"]["enum"] == [
+        "auto",
+        "probe",
+        "source",
+    ]
     assert frame_tool.output_schema is not None
     for field in (
         "start_s",
@@ -238,6 +258,10 @@ def test_exact_tool_surface_and_annotations() -> None:
         "requested_moment_id",
         "requested_t",
         "requested_t_covered",
+        "requested_quality",
+        "evidence_quality",
+        "width",
+        "height",
     ):
         assert field in frame_tool.output_schema["properties"]
     search_hit_schema = tools["video_search"].output_schema["$defs"]["SearchHit"]
@@ -281,6 +305,27 @@ async def test_transcript_tool_omitted_limit_invokes_service_with_200() -> None:
     )
 
     assert service.limits == [200]
+
+
+@pytest.mark.asyncio
+async def test_transcript_tool_exposes_compact_view() -> None:
+    class CompactTranscriptService(FakeService):
+        def get_transcript(self, video_id: str, **kwargs: object) -> TranscriptPage:
+            return TranscriptPage(
+                video_id=video_id,
+                segments=(),
+                view=TranscriptView(kwargs["view"]),
+            )
+
+    server = create_server(CompactTranscriptService())
+    result = await server._tool_manager.call_tool(
+        "video_get_transcript",
+        {"video_id": "demo", "view": "compact"},
+        convert_result=True,
+    )
+    _unstructured, structured = result
+
+    assert structured["view"] == "compact"
 
 
 @pytest.mark.asyncio
@@ -360,6 +405,10 @@ async def test_frame_tool_accepts_exact_moment_and_returns_structured_ocr() -> N
     assert result.structuredContent["end_s"] == 2
     assert result.structuredContent["ocr_text"] == "print('hello')"
     assert result.structuredContent["ocr_confidence"] == 0.9
+    assert result.structuredContent["requested_quality"] == FrameQuality.AUTO.value
+    assert result.structuredContent["evidence_quality"] == FrameEvidenceQuality.RETAINED.value
+    assert result.structuredContent["width"] == 320
+    assert result.structuredContent["height"] == 180
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-v0.1.4",
+  "suite": "keyframe-v0.2.0",
   "description": "Ten reproducible prompts for a prepared first-party tutorial fixture and demo target.",
   "variables": {
     "VIDEO_SOURCE": "Path or public URL supplied by the evaluator",

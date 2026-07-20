@@ -1,7 +1,7 @@
 {
   "name": "keyframe",
   "displayName": "Keyframe",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Index videos and animated GIFs locally, then retrieve timestamped transcript, OCR, code, and frames through MCP.",
   "author": {
     "name": "Matthew Wyatt",
