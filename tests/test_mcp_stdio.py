@@ -251,7 +251,7 @@ async def test_stdio_plugin_stages_one_selected_upload_in_private_temp_root(
         },
     )
 
-    with anyio.fail_after(20):
+    with anyio.fail_after(REAL_STDIO_PIPELINE_TIMEOUT_S):
         async with stdio_client(parameters) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
