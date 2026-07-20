@@ -23,6 +23,7 @@ from video_context_mcp.models import (
 
 SCHEMA_VERSION = 5
 _TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
+_LOCAL_VIDEO_ID_RE = re.compile(r"local-[0-9a-f]{16}\Z")
 
 
 class KeyframeStore:
@@ -339,6 +340,37 @@ class KeyframeStore:
             ).fetchone()
         return self._video_from_row(row) if row else None
 
+    def find_unambiguous_local_id_typo(self, video_id: str) -> VideoRecord | None:
+        """Resolve one substituted character in a local content-hash ID.
+
+        This deliberately excludes provider IDs and resolves only when exactly one
+        ready local cache entry is one character away. Callers therefore cannot
+        accidentally select among multiple plausible videos.
+        """
+
+        if not video_id.startswith("local-") or len(video_id) != len("local-") + 16:
+            return None
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM videos
+                WHERE source_kind = 'local' AND status = 'ready'
+                AND length(video_id) = ?""",
+                (len(video_id),),
+            ).fetchall()
+        matches = [
+            row
+            for row in rows
+            if _LOCAL_VIDEO_ID_RE.fullmatch(row["video_id"]) is not None
+            and sum(
+                requested != candidate
+                for requested, candidate in zip(video_id, row["video_id"], strict=True)
+            )
+            == 1
+        ]
+        if len(matches) != 1:
+            return None
+        return self._video_from_row(matches[0])
+
     def save_video(
         self,
         video: VideoRecord,
@@ -508,12 +540,20 @@ class KeyframeStore:
         kind: MomentKind,
         offset: int,
         limit: int,
+        start_s: float | None = None,
+        end_s: float | None = None,
     ) -> tuple[list[VisualMoment], bool]:
         clauses = ["video_id = ?"]
         values: list[object] = [video_id]
         if kind is not MomentKind.ANY:
             clauses.append("kind = ?")
             values.append(kind.value)
+        if start_s is not None:
+            clauses.append("end_s >= ?")
+            values.append(start_s)
+        if end_s is not None:
+            clauses.append("start_s <= ?")
+            values.append(end_s)
         values.extend([limit + 1, offset])
         with self.connect() as connection:
             rows = connection.execute(
@@ -532,6 +572,8 @@ class KeyframeStore:
         channel: SearchChannel,
         offset: int,
         limit: int,
+        start_s: float | None = None,
+        end_s: float | None = None,
     ) -> tuple[list[SearchHit], bool]:
         strict_query, broad_query = _fts_queries(query)
         filters: list[str] = []
@@ -542,6 +584,12 @@ class KeyframeStore:
         if channel is not SearchChannel.ALL:
             filters.append("content.channel = ?")
             filter_values.append(channel.value)
+        if start_s is not None:
+            filters.append("content.end_s >= ?")
+            filter_values.append(start_s)
+        if end_s is not None:
+            filters.append("content.start_s <= ?")
+            filter_values.append(end_s)
         with self.connect() as connection:
             match_query = strict_query
             if broad_query != strict_query:

@@ -15,11 +15,12 @@ come from prior responses; clients must preserve opaque cursors unchanged.
 }
 ```
 
-A fresh fast-only index returns `visual_coverage="probe"` and at most 12 sparse
-visual moments; an existing full index can satisfy a later fast request. Branch
-on the returned coverage, `has_audio`, and transcript availability. Immediately list at most
-12 moment summaries; this does not load images. A probe miss is not evidence
-that something was absent.
+A fresh fast-only index retains at most 12 sparse visual moments and returns
+`visual_coverage="probe"`; an existing full index can satisfy a later fast
+request. Branch on the returned coverage, `has_audio`, and transcript
+availability. Call `video_list_moments` once with `kind="any"` and `limit=12` to
+read its routing summaries; this does not load images. A probe miss is not
+evidence that something was absent.
 
 The default 1,800-second value is an explicit resource guard, not a format
 limit. If Keyframe reports a longer duration and supplies an exact
@@ -43,6 +44,10 @@ Static GIFs should be supplied as ordinary images.
 
 ## Read a bounded transcript page
 
+Transcript pages default to the maximum 200 segments so whole-video retrieval
+uses the fewest calls. Set a smaller explicit limit for narrow time-bounded
+reads, as in this example:
+
 ```json
 {
   "video_id": "youtube-VIDEO_ID",
@@ -58,8 +63,9 @@ shorten, retype, or reconstruct a cursor. If one is rejected, discard it and
 restart that exact query once with the cursor omitted. Cursors are valid only
 while that cached index is unchanged; after any refresh or re-ingestion,
 discard outstanding cursors and start again from the first page. Search cursors
-also require the same query, video, and channel; moment cursors require the same
-video and kind. Page limits may change because they are not part of cursor scope.
+also require the same query, video, channel, `start_s`, and `end_s`; moment
+cursors require the same video, kind, `start_s`, and `end_s`. Page limits may
+change because they are not part of cursor scope.
 
 ## Summarize a whole video efficiently
 
@@ -70,7 +76,7 @@ for consequential visual claims. Skip generic searches; reserve `video_search`
 for targeted questions. If a full upgrade is necessary, list moments once for
 that new index generation because prior moment IDs and cursors are invalid.
 
-## Search spoken and visual evidence separately
+## Anchor speech, then search the same visual window
 
 ```json
 {
@@ -88,19 +94,40 @@ mistaken for exhaustive absence. Library-wide searches return no single
 coverage value; scope follow-up searches to one video before making any visual
 coverage or absence decision.
 
+For a referential question such as "which issue did they fix?", first locate
+the spoken anchor and read its bounded transcript context. Reuse that episode's
+bounds for shown search instead of accepting a clearer title from elsewhere:
+
+```json
+{
+  "query": "merged issue",
+  "video_id": "youtube-VIDEO_ID",
+  "channel": "shown",
+  "start_s": 720,
+  "end_s": 810,
+  "limit": 4
+}
+```
+
+Reject identity candidates outside `720..810`; do not join an earlier title to
+a later statement that an issue was fixed.
+
 ## Browse retained moments
 
 ```json
 {
   "video_id": "youtube-VIDEO_ID",
   "kind": "any",
-  "limit": 12
+  "start_s": 720,
+  "end_s": 810,
+  "limit": 8
 }
 ```
 
 Kind, stability, OCR confidence, language, and parse status are heuristic
 evidence. They are not a guarantee that reconstruction is correct. Probe
 moments have `stable_seconds=0`; only full analysis measures scene stability.
+Use bounded pages for a targeted episode rather than dumping every moment.
 
 ## Retrieve code and its source crop
 
@@ -117,18 +144,36 @@ confidence is low, inspect the image and preserve uncertainty. Moment IDs are
 opaque and generation-scoped; retrieve fresh IDs after upgrading probe coverage
 to full or performing any other refresh/re-ingestion.
 
-## Retrieve the nearest retained frame
+## Retrieve one exact retained frame
+
+```json
+{
+  "video_id": "youtube-VIDEO_ID",
+  "moment_id": "MOMENT_ID_FROM_BOUNDED_SHOWN_SEARCH",
+  "region": "full"
+}
+```
+
+Provide exactly one of `moment_id` or `t`, never both. Prefer the unchanged
+generation-scoped `moment_id` from bounded shown search or moment listing. Use a
+timestamp only when no moment ID is available:
 
 ```json
 {
   "video_id": "youtube-VIDEO_ID",
   "t": 137.5,
-  "region": "full"
+  "region": "auto_crop"
 }
 ```
 
-Use `"auto_crop"` for the OCR text region. Always cite `actual_t` from the
-response, because it can differ from the requested timestamp.
+The structured result includes `requested_moment_id` or `requested_t`, retained
+`start_s`/`end_s`, `requested_t_covered`, `actual_t`, `ocr_text`,
+`ocr_confidence`, and `visual_coverage`; the MCP result also normally includes
+an image block. Cite `actual_t`, and treat `requested_t_covered=false` under
+probe coverage as a gap requiring full coverage. If the host says image content was omitted
+because the model lacks image input, do not say the frame was seen or visually
+confirmed. Label the result OCR-derived and corroborate an exact identity with
+same-window full-index OCR from an adjacent moment, or preserve uncertainty.
 
 ## Expected errors
 

@@ -398,6 +398,66 @@ def test_pages_and_nearest_moment(store: KeyframeStore) -> None:
     assert nearest == sample_moment()
 
 
+def test_visual_time_bounds_exclude_disjoint_moments_and_search_hits(
+    store: KeyframeStore,
+) -> None:
+    early = sample_moment()
+    late = early.model_copy(
+        update={
+            "moment_id": "file_deadbeef:m:1",
+            "actual_t": 9,
+            "start_s": 8,
+            "end_s": 10,
+            "stable_seconds": 2,
+            "ocr_text": "except ValueError in the later example",
+            "code": "except ValueError:\n    pass",
+        }
+    )
+    store.save_video(sample_video(), [sample_segment()], [early, late])
+
+    early_page, early_more = store.moment_page(
+        sample_video().video_id,
+        kind=MomentKind.ANY,
+        start_s=None,
+        end_s=7.5,
+        offset=0,
+        limit=10,
+    )
+    late_page, late_more = store.moment_page(
+        sample_video().video_id,
+        kind=MomentKind.ANY,
+        start_s=7.5,
+        end_s=None,
+        offset=0,
+        limit=10,
+    )
+    assert early_page == [early] and early_more is False
+    assert late_page == [late] and late_more is False
+
+    early_hits, early_hits_more = store.search(
+        "ValueError",
+        video_id=sample_video().video_id,
+        channel=SearchChannel.SHOWN,
+        start_s=None,
+        end_s=7.5,
+        offset=0,
+        limit=10,
+    )
+    late_hits, late_hits_more = store.search(
+        "ValueError",
+        video_id=sample_video().video_id,
+        channel=SearchChannel.SHOWN,
+        start_s=7.5,
+        end_s=None,
+        offset=0,
+        limit=10,
+    )
+    assert [hit.moment_id for hit in early_hits] == [early.moment_id]
+    assert [hit.moment_id for hit in late_hits] == [late.moment_id]
+    assert early_hits_more is False
+    assert late_hits_more is False
+
+
 def test_empty_search_query_is_rejected(store: KeyframeStore) -> None:
     with pytest.raises(CacheError, match="letter or number"):
         store.search("!!!", video_id=None, channel=SearchChannel.ALL, offset=0, limit=10)

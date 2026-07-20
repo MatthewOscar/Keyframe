@@ -187,6 +187,11 @@ def test_marketplaces_point_to_the_same_self_contained_plugin() -> None:
     assert cursor["metadata"]["pluginRoot"] == "plugins"
     assert cursor["plugins"][0]["source"] == "keyframe"
     assert codex["plugins"][0]["source"]["path"] == "./plugins/keyframe"
+    assert {claude["name"], cursor["name"], codex["name"]} == {"keyframe-tools"}
+    assert all(
+        catalog["name"] != catalog["plugins"][0]["name"]
+        for catalog in (claude, cursor, codex)
+    )
     assert all(catalog["plugins"][0]["name"] == "keyframe" for catalog in (claude, cursor, codex))
     assert set(claude) == {"name", "owner", "description", "plugins"}
     assert set(cursor) == {"name", "owner", "metadata", "plugins"}
@@ -206,15 +211,30 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     ]
     contents = [path.read_text(encoding="utf-8") for path in paths]
     assert contents[0] == contents[1] == contents[2]
-    assert "Use when a coding agent must understand" in contents[0]
+    assert "Use for tutorials, screen recordings" in contents[0]
     assert "Use when Codex must understand" not in contents[0]
     assert "For each source, make at most one successful fast ingest" in contents[0]
     assert "Do not split, restage, or reconstruct the source" in contents[0]
     assert "Skip generic search for a whole-video summary" in contents[0]
-    assert "`limit=200` and no time bounds" in contents[0]
+    assert "default `limit=200` and no time bounds" in contents[0]
     assert "Copy it byte-for-byte" in contents[0]
+    assert "Open this skill only through the exact host-provided locator" in contents[0]
+    assert "do not search for another copy" in contents[0]
+    assert "Copy the returned structured `video_id` byte-for-byte" in contents[0]
+    assert "never wait for a" in contents[0]
+    assert "follow-up such as" in contents[0]
+    assert "Pass that episode's `start_s`/`end_s`" in contents[0]
+    assert "never join an ID or" in contents[0]
+    assert "requested_t_covered=true" in contents[0]
+    assert "Label the answer OCR-derived" in contents[0]
+    assert "temporally local evidence" in contents[0]
     server_source = (ROOT / "src/video_context_mcp/server.py").read_text(encoding="utf-8")
     assert "Ingest each source with mode='fast' once" in server_source
     assert "one mode='full' upgrade per source" in server_source
     assert "do not split or restage it" in server_source
     assert "copy it byte-for-byte" in server_source
+    assert "instead of searching plugin caches" in server_source
+    assert "Exact identity follow-ups" in server_source
+    assert "Never select a higher-ranked OCR hit from another interval" in server_source
+    assert "requested_t_covered=false" in server_source
+    assert "never claim visual inspection" in server_source

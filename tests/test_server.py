@@ -74,18 +74,38 @@ class FakeService:
         )
 
     def get_frame(self, video_id: str, **kwargs: object) -> SimpleNamespace:
+        requested_moment_id = kwargs.get("moment_id")
+        requested_t = kwargs.get("t")
         return SimpleNamespace(
             result=FrameResult(
                 video_id=video_id,
                 moment_id="moment",
-                requested_t=1,
+                start_s=0,
+                end_s=2,
+                requested_moment_id=(
+                    str(requested_moment_id) if requested_moment_id is not None else None
+                ),
+                requested_t=float(requested_t) if requested_t is not None else None,
+                requested_t_covered=True if requested_t is not None else None,
                 actual_t=1,
                 kind=MomentKind.CODE,
                 region=FrameRegion.FULL,
+                classification_confidence=0.88,
+                ocr_text="print('hello')",
+                ocr_confidence=0.9,
             ),
             image_data=b"image",
             mime_type="image/jpeg",
         )
+
+
+class RecordingTranscriptService(FakeService):
+    def __init__(self) -> None:
+        self.limits: list[int] = []
+
+    def get_transcript(self, video_id: str, **kwargs: object) -> TranscriptPage:
+        self.limits.append(int(kwargs["limit"]))
+        return super().get_transcript(video_id, **kwargs)
 
 
 def test_mcp_root_uri_is_canonicalized_and_rejects_nonlocal_forms(tmp_path: Path) -> None:
@@ -184,9 +204,48 @@ def test_exact_tool_surface_and_annotations() -> None:
     ingest_schema = tools["video_ingest"].parameters["properties"]["max_duration_s"]
     assert ingest_schema["default"] == 1_800
     assert ingest_schema["maximum"] == 14_400
+    transcript_tool = tools["video_get_transcript"]
+    transcript_limit = transcript_tool.parameters["properties"]["limit"]
+    assert transcript_limit["default"] == 200
+    assert transcript_limit["maximum"] == 200
+    assert "fewest safe pages" in transcript_limit["description"]
+    transcript_video_id = transcript_tool.parameters["properties"]["video_id"]
+    assert "byte-for-byte" in transcript_video_id["description"]
+    ingest_video_id = tools["video_ingest"].output_schema["properties"]["video_id"]
+    assert "byte-for-byte" in ingest_video_id["description"]
+    assert "instead of searching plugin caches" in server.instructions
+    assert "exact structured video_id byte-for-byte" in server.instructions
+    for name in ("video_search", "video_list_moments"):
+        properties = tools[name].parameters["properties"]
+        required = set(tools[name].parameters.get("required", ()))
+        for bound in ("start_s", "end_s"):
+            assert bound in properties
+            assert properties[bound]["default"] is None
+            assert properties[bound]["anyOf"][0]["minimum"] == 0
+            assert bound not in required
+    frame_tool = tools["video_get_frame"]
+    frame_properties = frame_tool.parameters["properties"]
+    frame_required = set(frame_tool.parameters["required"])
+    assert {"moment_id", "t"} <= frame_properties.keys()
+    assert {"moment_id", "t"}.isdisjoint(frame_required)
+    assert frame_tool.output_schema is not None
+    for field in (
+        "start_s",
+        "end_s",
+        "classification_confidence",
+        "ocr_text",
+        "ocr_confidence",
+        "requested_moment_id",
+        "requested_t",
+        "requested_t_covered",
+    ):
+        assert field in frame_tool.output_schema["properties"]
+    search_hit_schema = tools["video_search"].output_schema["$defs"]["SearchHit"]
+    assert "video_get_frame" in search_hit_schema["properties"]["moment_id"]["description"]
     for name in ("video_get_transcript", "video_search", "video_list_moments"):
         cursor_schema = tools[name].parameters["properties"]["cursor"]
         assert "byte-for-byte" in cursor_schema["description"]
+        assert cursor_schema["anyOf"][0]["maxLength"] == 512
         assert tools[name].output_schema is not None
         output_cursor = tools[name].output_schema["properties"]["next_cursor"]
         assert "byte-for-byte" in output_cursor["description"]
@@ -208,6 +267,20 @@ async def test_structured_ingest_result_reports_request_local_timings() -> None:
         "visual_ms": 7,
         "index_commit_ms": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_transcript_tool_omitted_limit_invokes_service_with_200() -> None:
+    service = RecordingTranscriptService()
+    server = create_server(service)
+
+    await server._tool_manager.call_tool(
+        "video_get_transcript",
+        {"video_id": "demo"},
+        convert_result=True,
+    )
+
+    assert service.limits == [200]
 
 
 @pytest.mark.asyncio
@@ -266,6 +339,27 @@ async def test_visual_tool_returns_text_image_and_structured_content() -> None:
     assert [block.type for block in result.content] == ["text", "image"]
     assert result.structuredContent is not None
     assert result.structuredContent["code"] == "print('hello')"
+
+
+@pytest.mark.asyncio
+async def test_frame_tool_accepts_exact_moment_and_returns_structured_ocr() -> None:
+    server = create_server(FakeService())
+    result = await server._tool_manager.call_tool(
+        "video_get_frame",
+        {"video_id": "demo", "moment_id": "moment"},
+        convert_result=True,
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert [block.type for block in result.content] == ["text", "image"]
+    assert result.structuredContent is not None
+    assert result.structuredContent["moment_id"] == "moment"
+    assert result.structuredContent["requested_moment_id"] == "moment"
+    assert result.structuredContent["requested_t"] is None
+    assert result.structuredContent["start_s"] == 0
+    assert result.structuredContent["end_s"] == 2
+    assert result.structuredContent["ocr_text"] == "print('hello')"
+    assert result.structuredContent["ocr_confidence"] == 0.9
 
 
 @pytest.mark.parametrize(

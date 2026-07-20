@@ -25,7 +25,7 @@ GPT-5.6 reasons over Keyframe's evidence, changes code, and runs the tests.
 
 ### Prerequisites
 
-Keyframe v0.1.2 requires Python 3.12 and uses [`uv`](https://docs.astral.sh/uv/). Install
+Keyframe v0.1.3 requires Python 3.12 and uses [`uv`](https://docs.astral.sh/uv/). Install
 these native tools before starting:
 
 - FFmpeg and `ffprobe` for media inspection and frame extraction
@@ -47,10 +47,10 @@ uv sync --frozen --group dev
 uv run video-context-mcp doctor
 ```
 
-After version 0.1.2 is published, the equivalent isolated PyPI command is:
+After version 0.1.3 is published, the equivalent isolated PyPI command is:
 
 ```bash
-uvx --python 3.12 --from "video-context-mcp==0.1.2" video-context-mcp doctor
+uvx --python 3.12 --from "video-context-mcp==0.1.3" video-context-mcp doctor
 ```
 
 If PyPI is not yet available after the release is tagged, use the immutable
@@ -58,7 +58,7 @@ GitHub release tag:
 
 ```bash
 uvx --python 3.12 --from \
-  "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.2" \
+  "git+https://github.com/MatthewOscar/Keyframe.git@v0.1.3" \
   video-context-mcp doctor
 ```
 
@@ -66,7 +66,7 @@ After the PyPI release, add `[whisper]` to the package spec only when local
 speech-to-text is needed:
 
 ```bash
-uvx --python 3.12 --from "video-context-mcp[whisper]==0.1.2" video-context-mcp doctor
+uvx --python 3.12 --from "video-context-mcp[whisper]==0.1.3" video-context-mcp doctor
 ```
 
 ### Connect a client
@@ -94,7 +94,7 @@ Add the following to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.keyframe]
 command = "uvx"
-args = ["--python", "3.12", "--from", "video-context-mcp==0.1.2", "video-context-mcp", "serve", "--transport", "stdio"]
+args = ["--python", "3.12", "--from", "video-context-mcp==0.1.3", "video-context-mcp", "serve", "--transport", "stdio"]
 startup_timeout_sec = 180
 tool_timeout_sec = 1900
 env = { KEYFRAME_ALLOWED_ROOTS = "/Users/you/Videos" }
@@ -113,13 +113,21 @@ shown. Cite the timestamps.”
 ### Install the Keyframe plugin in Codex and ChatGPT desktop
 
 The plugin bundles the same MCP server with the `keyframe-video-rag` workflow
-skill. Its launcher installs the exact `v0.1.2` Git tag with local Whisper, so
+skill. Its launcher installs the exact `v0.1.3` Git tag with local Whisper, so
 judges do not need
 the PyPI publication to use it:
 
 ```bash
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.2
-codex plugin add keyframe@keyframe
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.1.3
+codex plugin add keyframe@keyframe-tools
+```
+
+When upgrading an existing v0.1.2 installation, remove the old internal catalog
+first so Codex does not retain two Keyframe entries:
+
+```bash
+codex plugin remove keyframe@keyframe
+codex plugin marketplace remove keyframe
 ```
 
 For local marketplace validation, add the repository root instead:
@@ -128,12 +136,12 @@ For local marketplace validation, add the repository root instead:
 codex plugin marketplace add .
 ```
 
-Before `v0.1.2` is tagged, use the direct project/server configuration for live
+Before `v0.1.3` is tagged, use the direct project/server configuration for live
 testing; the installable plugin intentionally resolves that immutable tag.
 
 Then restart the ChatGPT desktop app, open the Plugins Directory, select the
 **Keyframe** marketplace source, and install **Keyframe**. Start a new chat so
-the skill and tools are loaded. Keyframe v0.1.2 targets this local desktop flow;
+the skill and tools are loaded. Keyframe v0.1.3 targets this local desktop flow;
 it does not host a ChatGPT web app.
 
 Claude Code and Cursor can install the same repository as a marketplace, while
@@ -192,10 +200,10 @@ targeted fact.
 | --- | --- |
 | `video_ingest` | Index one local/public video or local animated GIF using a sparse fast probe or bounded full analysis, with captions, local Whisper for audio, or no transcript; report cache status and request-local stage timings. |
 | `video_get_transcript` | Page through timestamped transcript segments, optionally within a time range. |
-| `video_search` | Rank matching `said`, `shown`, or combined evidence across one video or the local library. |
-| `video_list_moments` | Page through retained moments filtered by code, terminal, slide, diagram, other, or any. |
+| `video_search` | Rank matching `said`, `shown`, or combined evidence across one video or the local library, optionally inside one time window. |
+| `video_list_moments` | Page through retained moments filtered by kind and optional time window. |
 | `video_get_code` | Return reconstructed code plus its cropped source frame for a moment or nearby timestamp. |
-| `video_get_frame` | Return the nearest retained frame, optionally using the automatic content crop. |
+| `video_get_frame` | Return an exact `moment_id` or nearest timestamped frame with source image, retained bounds, and OCR fallback. |
 
 Classification, language detection, OCR confidence, and parse status are
 evidence—not guarantees. Visual tools return both structured metadata and the
@@ -204,7 +212,9 @@ source image so the model can inspect disagreements.
 For whole-video summaries, the bundled skill avoids generic search: it lists
 one 12-moment routing page, retrieves transcript pages at the 200-segment
 maximum with byte-for-byte opaque cursors, and verifies only consequential
-frames.
+frames. As a guardrail for agent transcription mistakes, Keyframe can recover a
+single substituted character in a local content-hash ID only when exactly one
+ready local video matches; remote and ambiguous IDs remain strict errors.
 
 See [`docs/tool-examples.md`](docs/tool-examples.md) for exact argument objects,
 pagination, visual-result behavior, and expected errors.
@@ -272,7 +282,7 @@ on macOS.
 
 ## Current limits
 
-- v0.1.2 accepts individual public videos and local animated GIFs, not playlists
+- v0.1.3 accepts individual public videos and local animated GIFs, not playlists
   or livestreams. Static GIFs should be attached as images; remote GIF URLs are
   not yet an advertised compatibility surface.
 - Private, members-only, age-restricted, DRM, cookie, and login flows are out of
@@ -298,7 +308,7 @@ on macOS.
 - Whisper is optional in the base Python package and bundled by the installable
   plugin. It can be resource intensive on CPU-only machines, and first use may
   download the configured model before ingestion begins.
-- Windows support is preview-level in v0.1.2.
+- Windows support is preview-level in v0.1.3.
 - The bundled registrations target local CLI and desktop sessions. Hosted
   agents cannot launch this STDIO process on the user's machine.
 

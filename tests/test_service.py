@@ -285,7 +285,9 @@ def test_visual_scratch_uses_os_temp_and_publication_stays_atomic(
         analysis_dirs.append(work_dir)
         return base_extractor(media_path, work_dir, **kwargs)
 
-    def record_replace(source_path: str | bytes | Path, destination_path: str | bytes | Path) -> None:
+    def record_replace(
+        source_path: str | bytes | Path, destination_path: str | bytes | Path
+    ) -> None:
         source_candidate = Path(source_path)
         destination_candidate = Path(destination_path)
         if destination_candidate.is_relative_to(settings.artifacts_dir):
@@ -674,6 +676,10 @@ def test_page_cursors_are_bound_to_the_exact_query_scope(tmp_path: Path) -> None
         )
     transcript_restart = service.get_transcript(ingested.video_id, limit=1)
     assert transcript_restart.segments == transcript.segments
+    prefix, kind_code, _offset, scope = transcript.next_cursor.split(".")
+    oversized_cursor = f"{prefix}.{kind_code}.zzzzzzzzzzzzz.{scope}"
+    with pytest.raises(CursorError, match="restart this query once"):
+        service.get_transcript(ingested.video_id, cursor=oversized_cursor)
 
     moments = service.list_moments(ingested.video_id, kind=MomentKind.ANY, limit=1)
     assert moments.next_cursor is not None
@@ -730,6 +736,135 @@ def test_page_cursors_are_bound_to_the_exact_query_scope(tmp_path: Path) -> None
     assert search_restart.hits == search.hits
 
 
+def test_default_transcript_pages_cover_383_segments_in_two_calls(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    transcript_texts = tuple(f"segment {index}" for index in range(383))
+    acquire, _calls = _fake_acquirer(
+        transcript_texts=transcript_texts,
+        duration_s=383.0,
+    )
+    service = _service(settings, acquire)
+    ingested = service.ingest(
+        str(source),
+        mode=IngestMode.FAST,
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+
+    first = service.get_transcript(ingested.video_id)
+    assert len(first.segments) == 200
+    assert first.has_more is True
+    assert first.next_cursor is not None
+    assert first.next_cursor.startswith("kf1.")
+
+    second = service.get_transcript(ingested.video_id, cursor=first.next_cursor)
+    assert len(second.segments) == 183
+    assert second.has_more is False
+    assert second.next_cursor is None
+
+    combined = (*first.segments, *second.segments)
+    assert [segment.text for segment in combined] == list(transcript_texts)
+    assert len({segment.segment_id for segment in combined}) == 383
+
+    explicitly_small = service.get_transcript(ingested.video_id, limit=40)
+    assert len(explicitly_small.segments) == 40
+    assert explicitly_small.has_more is True
+
+    replacement = "0" if ingested.video_id[-1] != "0" else "1"
+    mistyped_video_id = f"{ingested.video_id[:-1]}{replacement}"
+    recovered = service.get_transcript(mistyped_video_id)
+    assert recovered.video_id == ingested.video_id
+    assert recovered.segments == first.segments
+
+
+def test_local_video_id_typo_recovery_refuses_ambiguous_match(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    ingested = service.ingest(
+        str(source),
+        mode=IngestMode.FAST,
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+    original = service.store.get_video(ingested.video_id)
+    assert original is not None
+
+    final_replacement = "0" if ingested.video_id[-1] != "0" else "1"
+    requested = f"{ingested.video_id[:-1]}{final_replacement}"
+    alternate_replacement = "0" if requested[-2] != "0" else "1"
+    alternate_id = f"{requested[:-2]}{alternate_replacement}{requested[-1]}"
+    service.store.save_video(
+        original.model_copy(
+            update={
+                "video_id": alternate_id,
+                "source": "ambiguous-local-fixture.mp4",
+                "source_fingerprint": "sha256:ambiguous:pipeline:test",
+                "has_transcript": False,
+                "local_source_path": None,
+                "local_source_size": None,
+                "local_source_mtime_ns": None,
+            }
+        ),
+        (),
+        (),
+    )
+
+    with pytest.raises(CacheError, match="Copy video_id byte-for-byte"):
+        service.get_transcript(requested)
+
+
+def test_local_video_id_typo_is_canonicalized_across_read_tools(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    ingested = service.ingest(
+        str(source),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+    mistyped_video_id = f"{ingested.video_id[:-1]}Z"
+
+    transcript = service.get_transcript(mistyped_video_id)
+    search = service.search("alpha", video_id=mistyped_video_id)
+    moments = service.list_moments(mistyped_video_id)
+    code = service.get_code(mistyped_video_id, t=2)
+    frame = service.get_frame(mistyped_video_id, t=2)
+
+    assert transcript.video_id == ingested.video_id
+    assert search.hits and {hit.video_id for hit in search.hits} == {ingested.video_id}
+    assert moments.video_id == ingested.video_id
+    assert code.result.video_id == ingested.video_id
+    assert frame.result.video_id == ingested.video_id
+
+
+def test_remote_video_ids_are_never_fuzzy_matched(tmp_path: Path) -> None:
+    settings, _source_root = _settings(tmp_path)
+    acquire, _calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    service.store.save_video(
+        VideoRecord(
+            video_id="youtube-0123456789abcdef",
+            source="https://www.youtube.com/watch?v=fixture",
+            source_kind="youtube",
+            source_fingerprint="youtube:fixture:pipeline:test",
+            title="Remote fixture",
+            duration_s=10,
+            has_transcript=False,
+            indexed_mode=IngestMode.FAST,
+            visual_coverage=VisualCoverage.PROBE,
+            keyframe_count=0,
+            pipeline_version=PIPELINE_VERSION,
+        ),
+        (),
+        (),
+    )
+
+    with pytest.raises(CacheError, match="Copy video_id byte-for-byte"):
+        service.get_transcript("youtube-0123456789abcdee")
+
+
 def test_get_code_requires_exactly_one_selector_and_rejects_non_code_moments(
     tmp_path: Path,
 ) -> None:
@@ -753,6 +888,158 @@ def test_get_code_requires_exactly_one_selector_and_rejects_non_code_moments(
     assert selected.result.requested_t is None
     assert selected.result.moment_id == moments[0].moment_id
     assert selected.image_data
+
+
+def test_get_frame_round_trips_an_exact_moment_and_keeps_timestamp_compatibility(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    ingested = service.ingest(
+        str(source), mode=IngestMode.FULL, transcript_mode=TranscriptMode.CAPTIONS
+    )
+
+    listed = service.list_moments(ingested.video_id, kind=MomentKind.ANY)
+    assert len(listed.moments) == 2
+    exact_id = listed.moments[1].moment_id
+    stored = service.store.get_moment(exact_id)
+    assert stored is not None
+
+    exact = service.get_frame(ingested.video_id, moment_id=exact_id)
+
+    assert exact.result.moment_id == exact_id
+    assert exact.result.requested_moment_id == exact_id
+    assert exact.result.requested_t is None
+    assert exact.result.requested_t_covered is None
+    assert exact.result.start_s == stored.start_s
+    assert exact.result.end_s == stored.end_s
+    assert exact.result.actual_t == stored.actual_t
+    assert exact.result.ocr_text == stored.ocr_text
+    assert exact.result.ocr_confidence == stored.ocr_confidence
+    assert exact.result.classification_confidence == stored.classification_confidence
+    assert exact.image_data
+
+    timestamp = service.get_frame(ingested.video_id, t=2.0)
+    assert timestamp.result.requested_moment_id is None
+    assert timestamp.result.requested_t == 2.0
+    assert timestamp.result.requested_t_covered is True
+    assert timestamp.result.moment_id == listed.moments[0].moment_id
+
+    with pytest.raises(SourceError, match="exactly one"):
+        service.get_frame(ingested.video_id)
+    with pytest.raises(SourceError, match="exactly one"):
+        service.get_frame(ingested.video_id, moment_id=exact_id, t=7.0)
+
+    indexed = service.store.get_video(ingested.video_id)
+    assert indexed is not None
+    other_video_id = "local-0000000000000000"
+    service.store.save_video(
+        indexed.model_copy(
+            update={
+                "video_id": other_video_id,
+                "source": str(source_root / "other.mp4"),
+                "source_fingerprint": "sha256:other:pipeline:test",
+                "has_transcript": False,
+                "keyframe_count": 0,
+                "local_source_path": None,
+                "local_source_size": None,
+                "local_source_mtime_ns": None,
+            }
+        ),
+        (),
+        (),
+    )
+    with pytest.raises(CacheError, match="was not found in video"):
+        service.get_frame(other_video_id, moment_id=exact_id)
+
+
+def test_visual_time_bounds_exclude_disjoint_candidates_and_scope_cursors(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer()
+    service = _service(settings, acquire)
+    ingested = service.ingest(
+        str(source), mode=IngestMode.FULL, transcript_mode=TranscriptMode.CAPTIONS
+    )
+
+    early = service.list_moments(ingested.video_id, end_s=4.5)
+    late = service.list_moments(ingested.video_id, start_s=4.5)
+    assert len(early.moments) == 1
+    assert len(late.moments) == 1
+    assert early.moments[0].end_s < late.moments[0].start_s
+
+    early_search = service.search(
+        "return",
+        video_id=ingested.video_id,
+        channel=SearchChannel.SHOWN,
+        end_s=4.5,
+    )
+    late_search = service.search(
+        "return",
+        video_id=ingested.video_id,
+        channel=SearchChannel.SHOWN,
+        start_s=4.5,
+    )
+    assert [hit.moment_id for hit in early_search.hits] == [early.moments[0].moment_id]
+    assert [hit.moment_id for hit in late_search.hits] == [late.moments[0].moment_id]
+
+    moment_page = service.list_moments(
+        ingested.video_id,
+        start_s=0,
+        end_s=9,
+        limit=1,
+    )
+    assert moment_page.next_cursor is not None
+    with pytest.raises(CursorError, match="does not match"):
+        service.list_moments(
+            ingested.video_id,
+            start_s=0.1,
+            end_s=9,
+            cursor=moment_page.next_cursor,
+            limit=1,
+        )
+    with pytest.raises(CursorError, match="does not match"):
+        service.list_moments(
+            ingested.video_id,
+            start_s=0,
+            end_s=8.9,
+            cursor=moment_page.next_cursor,
+            limit=1,
+        )
+
+    search_page = service.search(
+        "return",
+        video_id=ingested.video_id,
+        channel=SearchChannel.SHOWN,
+        start_s=0,
+        end_s=9,
+        limit=1,
+    )
+    assert search_page.next_cursor is not None
+    with pytest.raises(CursorError, match="does not match"):
+        service.search(
+            "return",
+            video_id=ingested.video_id,
+            channel=SearchChannel.SHOWN,
+            start_s=0.1,
+            end_s=9,
+            cursor=search_page.next_cursor,
+            limit=1,
+        )
+    with pytest.raises(CursorError, match="does not match"):
+        service.search(
+            "return",
+            video_id=ingested.video_id,
+            channel=SearchChannel.SHOWN,
+            start_s=0,
+            end_s=8.9,
+            cursor=search_page.next_cursor,
+            limit=1,
+        )
 
 
 def test_code_timestamp_selects_a_moment_containing_the_requested_time(tmp_path: Path) -> None:
@@ -787,6 +1074,15 @@ def test_direct_service_calls_reject_non_finite_timestamps(tmp_path: Path) -> No
             service.get_frame("video", t=value)
         with pytest.raises(SourceError, match="finite non-negative"):
             service.get_transcript("video", start_s=value)
+        with pytest.raises(SourceError, match="finite non-negative"):
+            service.search("verified", video_id="video", start_s=value)
+        with pytest.raises(SourceError, match="finite non-negative"):
+            service.list_moments("video", end_s=value)
+
+    with pytest.raises(SourceError, match="start_s must not be greater"):
+        service.search("verified", video_id="video", start_s=2, end_s=1)
+    with pytest.raises(SourceError, match="start_s must not be greater"):
+        service.list_moments("video", start_s=2, end_s=1)
 
 
 def _seed_artifact_moment(
@@ -1131,9 +1427,7 @@ def test_full_gif_sampling_cap_holds_for_long_sources(tmp_path: Path) -> None:
     source = source_root / "long-animation.gif"
     source.write_bytes(b"long animated visual states")
     duration_s = 14_400.0
-    acquire, _calls = _fake_acquirer(
-        transcript_texts=(), has_audio=False, duration_s=duration_s
-    )
+    acquire, _calls = _fake_acquirer(transcript_texts=(), has_audio=False, duration_s=duration_s)
     observed: dict[str, object] = {}
     base_extractor = _fake_visual_extractor()
 

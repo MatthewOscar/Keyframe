@@ -25,7 +25,7 @@ three non-Codex project registrations:
 | Antigravity/Agy | `.agents/mcp_config.json` | `.agents/skills/keyframe-video-rag/SKILL.md` |
 
 These project registrations run the current checkout with `uv run`. The
-installable plugin registrations use `uvx` and the immutable `v0.1.2` release
+installable plugin registrations use `uvx` and the immutable `v0.1.3` release
 tag. Do not enable both the project registration and an installed Keyframe
 plugin in the same workspace: that starts two local servers backed by the same
 cache.
@@ -48,7 +48,7 @@ To register the tagged release for every Claude workspace instead, run:
 ```bash
 claude mcp add --transport stdio --scope user keyframe -- \
   uvx --python 3.12 --from \
-  "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.2" \
+  "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.3" \
   video-context-mcp serve --transport stdio
 ```
 
@@ -56,7 +56,7 @@ The Claude plugin includes both the server and the video-RAG skill:
 
 ```bash
 claude plugin marketplace add MatthewOscar/Keyframe
-claude plugin install keyframe@keyframe
+claude plugin install keyframe@keyframe-tools
 ```
 
 Before the release tag exists, use the checked-in project MCP for live testing
@@ -105,7 +105,7 @@ For a user-wide server, place this entry under `mcpServers` in
         "--python",
         "3.12",
         "--from",
-        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.2",
+        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.3",
         "video-context-mcp",
         "serve",
         "--transport",
@@ -122,7 +122,7 @@ For a user-wide server, place this entry under `mcpServers` in
 To index the repository as a Cursor plugin marketplace, run:
 
 ```bash
-agent plugin marketplace add --git-ref v0.1.2 \
+agent plugin marketplace add --git-ref v0.1.3 \
   https://github.com/MatthewOscar/Keyframe.git
 ```
 
@@ -150,7 +150,7 @@ For a user-wide server, put this in `~/.gemini/config/mcp_config.json`:
         "--python",
         "3.12",
         "--from",
-        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.2",
+        "video-context-mcp[whisper] @ git+https://github.com/MatthewOscar/Keyframe.git@v0.1.3",
         "video-context-mcp",
         "serve",
         "--transport",
@@ -234,9 +234,9 @@ not available.
   mode; if a client cancels a full run, retry safely because ingest is locked,
   staged, and atomically published.
 - Project configs run the checkout; plugin and global examples require the
-  `v0.1.2` tag. Until that human release step is complete, use project mode or
+  `v0.1.3` tag. Until that human release step is complete, use project mode or
   a local plugin checkout.
-- Windows remains preview-level for Keyframe v0.1.2.
+- Windows remains preview-level for Keyframe v0.1.3.
 
 The relevant client specifications are maintained by
 [Claude Code](https://code.claude.com/docs/en/mcp),

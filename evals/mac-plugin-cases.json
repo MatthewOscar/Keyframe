@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.1.2",
-  "description": "Supplementary regressions for attachment staging, long-video retries, honest Keyframe provenance, warm-cache latency, and animated GIFs.",
+  "suite": "keyframe-mac-plugin-v0.1.3",
+  "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, honest Keyframe provenance, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
       "agent_total_wall_time_s",
@@ -14,6 +14,7 @@
   "variables": {
     "LOCAL_VIDEO": "A selected local recording with audio and no caption sidecar",
     "LONG_LOCAL_VIDEO": "A selected local recording between 30 minutes and 4 hours with audio and no caption sidecar",
+    "EXACT_IDENTITY_VIDEO": "A first-party macOS screen recording with audio that shows one issue being merely considered, then later shows a different issue while a mentor says it was fixed and merged; both issue identities are readable on screen",
     "ANIMATED_GIF": "A first-party animated GIF with at least three visibly distinct states"
   },
   "cases": [
@@ -46,8 +47,22 @@
         "The source is not split and a staged attachment is not copied a second time",
         "The successful fast ingest reports request-local stage timings",
         "Exactly one 12-moment routing list is used for the fast index generation",
-        "Transcript pages use limit=200 and copy next_cursor byte-for-byte with unchanged scope",
+        "For a 383-segment transcript, exactly two successful transcript calls use the canonical ingest video_id and the returned next_cursor without a restart",
         "No generic video_search call is made for the whole-video summary"
+      ]
+    },
+    {
+      "id": "desktop-exact-identity-disambiguation",
+      "prompt": "Use Keyframe to identify the exact issue the mentor fixed in {{EXACT_IDENTITY_VIDEO}}. An earlier, different on-screen issue is only being considered. Link the spoken referent to the visual title, number, and merged state in the same episode, and verify the decisive retained frame.",
+      "success_criteria": [
+        "Finds the spoken anchor where the mentor's fixed work is introduced and retrieves bounded transcript context around it",
+        "Runs a channel=shown search with that episode's start_s and end_s; any moment list keeps the same bounds",
+        "Rejects the earlier merely considered issue and never joins its identity to the later fixed or merged statement",
+        "If probe coverage does not contain the decisive timestamp, upgrades the same video once to full and refreshes moment IDs",
+        "Calls video_get_frame with the exact full-generation moment_id from the bounded shown result and does not also pass t",
+        "Uses no whole-transcript or all-moments bulk dump and retrieves only the few local candidates needed",
+        "If the attached image is available, inspects it; if the host reports image content omitted, labels the answer OCR-derived and corroborates it with adjacent same-window full-index OCR instead of claiming visual confirmation",
+        "Reports the later issue title or number and merged state with the decisive timestamp"
       ]
     },
     {

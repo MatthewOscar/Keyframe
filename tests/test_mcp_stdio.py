@@ -104,6 +104,19 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                     assert transcript.structuredContent is not None
                     assert len(transcript.structuredContent["segments"]) == 1
                     assert transcript.structuredContent["has_more"] is True
+                    next_cursor = str(transcript.structuredContent["next_cursor"])
+                    prefix, kind_code, _offset, scope = next_cursor.split(".")
+                    oversized_cursor = f"{prefix}.{kind_code}.zzzzzzzzzzzzz.{scope}"
+                    invalid_cursor = await session.call_tool(
+                        "video_get_transcript",
+                        {"video_id": video_id, "cursor": oversized_cursor},
+                    )
+                    assert invalid_cursor.isError is True
+                    assert any(
+                        "Invalid page cursor" in block.text
+                        for block in invalid_cursor.content
+                        if isinstance(block, types.TextContent)
+                    )
 
                     said = await session.call_tool(
                         "video_search",
@@ -132,6 +145,32 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                     assert shown.structuredContent["hits"][0]["channel"] == "shown"
                     assert shown.structuredContent["hits"][0]["moment_id"] is not None
                     assert shown.structuredContent["visual_coverage"] == "probe"
+                    shown_moment_id = str(shown.structuredContent["hits"][0]["moment_id"])
+
+                    exact_frame = await session.call_tool(
+                        "video_get_frame",
+                        {"video_id": video_id, "moment_id": shown_moment_id},
+                    )
+                    assert exact_frame.isError is False
+                    assert exact_frame.structuredContent is not None
+                    assert exact_frame.structuredContent["moment_id"] == shown_moment_id
+                    assert exact_frame.structuredContent["requested_moment_id"] == shown_moment_id
+                    assert exact_frame.structuredContent["requested_t"] is None
+                    assert (
+                        exact_frame.structuredContent["start_s"]
+                        <= exact_frame.structuredContent["actual_t"]
+                    )
+                    assert (
+                        exact_frame.structuredContent["actual_t"]
+                        <= exact_frame.structuredContent["end_s"]
+                    )
+                    assert "slugify" in exact_frame.structuredContent["ocr_text"].lower()
+                    assert 0 <= exact_frame.structuredContent["ocr_confidence"] <= 1
+                    assert 0 <= exact_frame.structuredContent["classification_confidence"] <= 1
+                    assert (
+                        sum(isinstance(block, types.ImageContent) for block in exact_frame.content)
+                        == 1
+                    )
 
                     probe_moments = await session.call_tool(
                         "video_list_moments",
@@ -188,6 +227,8 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                     assert frame.isError is False
                     assert frame.structuredContent is not None
                     assert frame.structuredContent["requested_t"] == 5.0
+                    assert frame.structuredContent["requested_moment_id"] is None
+                    assert frame.structuredContent["requested_t_covered"] is True
                     assert [block.type for block in frame.content] == ["text", "image"]
 
                     invalid_code = await session.call_tool("video_get_code", {"video_id": video_id})

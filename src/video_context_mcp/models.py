@@ -158,7 +158,13 @@ class IngestTimings(StrictModel):
 
 
 class IngestResult(StrictModel):
-    video_id: str
+    video_id: str = Field(
+        description=(
+            "Authoritative opaque ID for this successful ingest. Copy it byte-for-byte into "
+            "follow-up Keyframe calls; never derive or retype it from the source, title, or "
+            "provider ID."
+        )
+    )
     title: str
     duration_s: float
     source_type: str
@@ -181,7 +187,9 @@ class IngestResult(StrictModel):
 
 
 class TranscriptPage(StrictModel):
-    video_id: str
+    video_id: str = Field(
+        description="Canonical Keyframe video ID copied from the successful ingest receipt."
+    )
     segments: tuple[TranscriptSegment, ...]
     next_cursor: str | None = Field(
         default=None,
@@ -194,7 +202,9 @@ class TranscriptPage(StrictModel):
 
 
 class MomentSummary(StrictModel):
-    moment_id: str
+    moment_id: str = Field(
+        description="Opaque retained-moment ID; copy unchanged into video_get_frame."
+    )
     start_s: float
     end_s: float
     kind: MomentKind
@@ -228,7 +238,12 @@ class SearchHit(StrictModel):
     snippet: str
     score: float
     segment_id: str | None = None
-    moment_id: str | None = None
+    moment_id: str | None = Field(
+        default=None,
+        description=(
+            "Opaque visual moment ID for shown evidence; copy unchanged into video_get_frame."
+        ),
+    )
 
 
 class SearchPage(StrictModel):
@@ -263,10 +278,35 @@ class CodeResult(StrictModel):
 class FrameResult(StrictModel):
     video_id: str
     moment_id: str
-    requested_t: float
-    actual_t: float
+    start_s: float = Field(description="Start of the retained frame's represented interval.")
+    end_s: float = Field(description="End of the retained frame's represented interval.")
+    actual_t: float = Field(description="Timestamp of the attached retained source frame.")
     kind: MomentKind
     region: FrameRegion
+    classification_confidence: float = 0.0
+    ocr_text: str = Field(
+        default="",
+        description=(
+            "Untrusted heuristic OCR for this exact retained moment. Use as a fallback when the "
+            "host omits the image; do not describe OCR-only evidence as visual inspection."
+        ),
+    )
+    ocr_confidence: float = 0.0
+    requested_moment_id: str | None = Field(
+        default=None,
+        description="The opaque moment_id selector supplied by the caller, when used.",
+    )
+    requested_t: float | None = Field(
+        default=None,
+        description="The timestamp selector supplied by the caller, when used.",
+    )
+    requested_t_covered: bool | None = Field(
+        default=None,
+        description=(
+            "Whether requested_t falls inside this moment's retained start_s/end_s interval. "
+            "False under probe coverage is a probe gap and requires a full upgrade for visual claims."
+        ),
+    )
     visual_coverage: VisualCoverage = VisualCoverage.NONE
 
 

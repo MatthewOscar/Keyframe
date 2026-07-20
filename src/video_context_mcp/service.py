@@ -34,6 +34,7 @@ from video_context_mcp.acquisition import (
 )
 from video_context_mcp.config import Settings
 from video_context_mcp.constants import (
+    DEFAULT_TRANSCRIPT_LIMIT,
     GIF_FULL_MAX_MOMENTS,
     GIF_FULL_MAX_SAMPLES,
     GIF_FULL_SAMPLE_FPS,
@@ -562,9 +563,10 @@ class KeyframeService:
         start_s: float | None = None,
         end_s: float | None = None,
         cursor: str | None = None,
-        limit: int = 40,
+        limit: int = DEFAULT_TRANSCRIPT_LIMIT,
     ) -> TranscriptPage:
-        self._require_video(video_id)
+        video = self._require_video(video_id)
+        video_id = video.video_id
         _validate_limit(limit, MAX_TRANSCRIPT_LIMIT, "transcript")
         if start_s is not None:
             _validate_timestamp(start_s, "Transcript start_s")
@@ -606,10 +608,14 @@ class KeyframeService:
         *,
         video_id: str | None = None,
         channel: SearchChannel = SearchChannel.ALL,
+        start_s: float | None = None,
+        end_s: float | None = None,
         cursor: str | None = None,
         limit: int = 10,
     ) -> SearchPage:
         video = self._require_video(video_id) if video_id is not None else None
+        if video is not None:
+            video_id = video.video_id
         try:
             selected_channel = SearchChannel(channel)
         except ValueError as exc:
@@ -618,12 +624,15 @@ class KeyframeService:
         normalized_query = query.strip()
         if not normalized_query:
             raise SourceError("Search query must not be empty.")
+        _validate_time_range(start_s, end_s, "Search")
         scope = cursor_scope(
             "search",
             {
                 "query": normalized_query,
                 "video_id": video_id,
                 "channel": selected_channel.value,
+                "start_s": start_s,
+                "end_s": end_s,
                 "visual_coverage": video.visual_coverage.value if video is not None else None,
             },
         )
@@ -632,6 +641,8 @@ class KeyframeService:
             normalized_query,
             video_id=video_id,
             channel=selected_channel,
+            start_s=start_s,
+            end_s=end_s,
             offset=offset,
             limit=limit,
         )
@@ -653,20 +664,26 @@ class KeyframeService:
         video_id: str,
         *,
         kind: MomentKind = MomentKind.ANY,
+        start_s: float | None = None,
+        end_s: float | None = None,
         cursor: str | None = None,
         limit: int = 20,
     ) -> MomentPage:
         video = self._require_video(video_id)
+        video_id = video.video_id
         try:
             selected_kind = MomentKind(kind)
         except ValueError as exc:
             raise SourceError(f"Unsupported moment kind: {kind!r}.") from exc
         _validate_limit(limit, MAX_MOMENT_LIMIT, "moment")
+        _validate_time_range(start_s, end_s, "Moment")
         scope = cursor_scope(
             "moments",
             {
                 "video_id": video_id,
                 "kind": selected_kind.value,
+                "start_s": start_s,
+                "end_s": end_s,
                 "visual_coverage": video.visual_coverage.value,
             },
         )
@@ -674,6 +691,8 @@ class KeyframeService:
         moments, has_more = self.store.moment_page(
             video_id,
             kind=selected_kind,
+            start_s=start_s,
+            end_s=end_s,
             offset=offset,
             limit=limit,
         )
@@ -717,6 +736,7 @@ class KeyframeService:
         t: float | None = None,
     ) -> VisualPayload[CodeResult]:
         video = self._require_video(video_id)
+        video_id = video.video_id
         if (moment_id is None) == (t is None):
             raise SourceError("Provide exactly one of moment_id or t.")
         if t is not None:
@@ -775,21 +795,34 @@ class KeyframeService:
         self,
         video_id: str,
         *,
-        t: float,
+        moment_id: str | None = None,
+        t: float | None = None,
         region: FrameRegion = FrameRegion.FULL,
     ) -> VisualPayload[FrameResult]:
         video = self._require_video(video_id)
-        _validate_timestamp(t, "Frame timestamp")
+        video_id = video.video_id
+        if (moment_id is None) == (t is None):
+            raise SourceError("Provide exactly one of moment_id or t.")
+        if t is not None:
+            _validate_timestamp(t, "Frame timestamp")
         try:
             selected_region = FrameRegion(region)
         except ValueError as exc:
             raise SourceError(f"Unsupported frame region: {region!r}.") from exc
-        moment = self.store.nearest_moment(
-            video_id,
-            t,
-            code_only=False,
-            tolerance_s=None,
-        )
+        if moment_id is not None:
+            moment = self.store.get_moment(moment_id)
+            if moment is None or moment.video_id != video_id:
+                raise CacheError(
+                    f"Visual moment {moment_id!r} was not found in video {video_id!r}."
+                )
+        else:
+            assert t is not None
+            moment = self.store.nearest_moment(
+                video_id,
+                t,
+                code_only=False,
+                tolerance_s=None,
+            )
         if moment is None:
             if video.visual_coverage is VisualCoverage.FULL:
                 raise CacheError(
@@ -810,10 +843,19 @@ class KeyframeService:
             result=FrameResult(
                 video_id=video_id,
                 moment_id=moment.moment_id,
+                start_s=moment.start_s,
+                end_s=moment.end_s,
+                requested_moment_id=moment_id,
                 requested_t=t,
+                requested_t_covered=(
+                    moment.start_s <= t <= moment.end_s if t is not None else None
+                ),
                 actual_t=moment.actual_t,
                 kind=moment.kind,
                 region=selected_region,
+                classification_confidence=moment.classification_confidence,
+                ocr_text=moment.ocr_text,
+                ocr_confidence=moment.ocr_confidence,
                 visual_coverage=video.visual_coverage,
             ),
             image_data=image_data,
@@ -1153,9 +1195,19 @@ class KeyframeService:
 
     def _require_video(self, video_id: str) -> VideoRecord:
         video = self.store.get_video(video_id)
+        if video is None:
+            video = self.store.find_unambiguous_local_id_typo(video_id)
+            if video is not None:
+                logger.warning(
+                    "Resolved one-character local video ID typo %r to canonical ID %r",
+                    video_id,
+                    video.video_id,
+                )
         if video is None or video.status != "ready":
             raise CacheError(
-                f"Video {video_id!r} is not indexed. Call video_ingest first and use its video_id."
+                f"Video {video_id!r} is not indexed. Copy video_id byte-for-byte from the "
+                "current successful video_ingest receipt or an immediately preceding Keyframe "
+                "result; do not derive or retype it from the source, title, or memory."
             )
         return video
 
@@ -1256,6 +1308,15 @@ def _validate_timestamp(value: float, label: str) -> None:
         raise SourceError(f"{label} must be a finite non-negative number.")
     if value < 0:
         raise SourceError(f"{label} must be a finite non-negative number.")
+
+
+def _validate_time_range(start_s: float | None, end_s: float | None, label: str) -> None:
+    if start_s is not None:
+        _validate_timestamp(start_s, f"{label} start_s")
+    if end_s is not None:
+        _validate_timestamp(end_s, f"{label} end_s")
+    if start_s is not None and end_s is not None and start_s > end_s:
+        raise SourceError(f"{label} start_s must not be greater than end_s.")
 
 
 def _preview(text: str, *, length: int = 240) -> str:
