@@ -322,9 +322,9 @@ not available.
   tool timeouts. Claude uses its millisecond timeout field. Cursor and Agy do
   not document equivalent per-server fields, so their configs intentionally
   omit Codex-only keys.
-- Full ingestion is synchronous and can take several minutes. Start in fast
-  mode; if a client cancels a full run, retry safely because ingest is locked,
-  staged, and atomically published.
+- Full ingestion is synchronous. Start in fast mode and reserve full indexing
+  for sequence-dependent or exhaustive visual work; if a client cancels a full
+  run, retry safely because ingest is locked, staged, and atomically published.
 - Project configs run the checkout; global server examples pin the v0.3.1 PyPI
   package, while plugin marketplace commands pin the immutable `v0.3.1` tag.
 - Windows remains preview-level for Keyframe v0.3.1.

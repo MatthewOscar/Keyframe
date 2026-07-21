@@ -34,7 +34,8 @@ web, and its library-wide `video_search` covers only previously indexed media.
 
 ![Conceptual Keyframe workflow: video moments become said/shown evidence, verified code, and passing tests](https://raw.githubusercontent.com/MatthewOscar/Keyframe/main/docs/design/keyframe-workflow.png)
 
-*Product-story concept; Keyframe is a local MCP server and plugin, not a hosted UI.*
+*Keyframe runs locally as an MCP server and plugin; this illustration shows the
+evidence-to-tested-code workflow.*
 
 ## Teach by demonstration
 
@@ -219,8 +220,8 @@ codex plugin marketplace add .
 
 Then restart the ChatGPT desktop app, open the Plugins Directory, select the
 **Keyframe** marketplace source, and install **Keyframe**. Start a new chat so
-the updated plugin and tools are loaded. Keyframe v0.3.1 targets this local
-desktop flow; it does not host a ChatGPT web app.
+the updated plugin and tools are loaded. Keyframe v0.3.1 intentionally uses this
+local desktop flow so media processing stays on the user's machine.
 
 Claude Code and Cursor can install the same repository as a marketplace, while
 Agy can install `plugins/keyframe` from a clone. Those exact commands and the
@@ -244,15 +245,21 @@ codex --model gpt-5.6
 Then ask:
 
 ```text
-Index tests/fixtures/keyframe-synthetic.mp4 in full mode. Search what was said
-about normalizing non-alphanumeric separators and what was shown for slugify.
-Inspect the decisive source frame, report whether the reconstructed Python
-parses, and cite timestamps.
+Index tests/fixtures/keyframe-synthetic.mp4 in full mode. Find the on-screen
+slugify_title implementation and the later terminal verification. This
+generated video is silent, so use visual evidence and source frames rather than
+claiming speech. Apply the recovered implementation to
+examples/demo_target/slugify.py, run python -m unittest discover -s
+examples/demo_target -p "test_*.py", and cite the decisive timestamps.
 ```
 
-The expected evidence is a spoken hit beginning at `00:03`, a `slugify_title`
-code moment spanning approximately `00:03-00:07`, and a parse-valid result or
-an explicit OCR fallback with its source image.
+The expected evidence is a `slugify_title` code moment spanning approximately
+`00:03-00:07` and an in-video terminal scene reporting `4 passed` around
+`00:07-00:10`. The recovered function should be parse-valid, or the agent
+should report an explicit OCR fallback and use the source frame as truth; the
+target's four tests should pass. The adjacent WebVTT sidecar supports
+deterministic transcript tests in a source checkout, but this no-build prompt
+deliberately remains valid when a client stages only the MP4.
 
 ### Source-checkout acceptance test
 
@@ -417,9 +424,10 @@ on macOS.
 - Keyframe does not automatically detect or redact credentials in OCR, search
   snippets, reconstructed code, or images. Use recordings safe for model input
   and review selected evidence before retrieving sensitive screens.
-- Keyframe has no analytics, accounts, hosted backend, or embedded model call.
+- All indexing runs locally: Keyframe uses no analytics, accounts, hosted
+  backend, or embedded model call.
 
-## Current limits
+## Compatibility and evidence boundaries
 
 - v0.3.1 accepts individual public videos and local animated GIFs, not playlists
   or livestreams. Static GIFs should be attached as images; remote GIF URLs are
@@ -440,12 +448,11 @@ on macOS.
   malformed or unusually slow inputs.
 - OCR can confuse glyphs and infer indentation incorrectly. Python, JSON, and
   JavaScript receive parse checks; TypeScript and unknown languages do not.
-- Keyframe constrains answers with timestamped evidence, but it cannot
-  guarantee a downstream model's reasoning. Lighter models can still confuse
-  visually similar steps. Models with image input should check exact claims
-  against the returned source frame; models without it render a sole requested
-  frame by returning only the exact `render_markdown`. The recommended
-  implementation workflow uses GPT-5.6.
+- Keyframe grounds answers in timestamped evidence and exposes source frames so
+  models can verify exact claims. OCR and downstream reasoning remain fallible,
+  so visually similar steps require a source-frame check. Models without image
+  input render a sole requested frame by returning only the exact
+  `render_markdown`. The recommended implementation workflow uses GPT-5.6.
 - Caption availability and media extraction depend on upstream providers and
   the pinned `yt-dlp` release.
 - Remote formats must be downloadable through Keyframe's validated in-process
@@ -478,10 +485,11 @@ Matthew Wyatt made the key product and engineering decisions: use an MCP server
 plus a small retrieval skill; keep extraction deterministic, local, and free of
 embedded model calls; use `yt-dlp` instead of creating a provider extractor;
 make fast ingestion include a bounded visual scout; require exact source-frame
-verification for uncertain OCR; and prioritize a reliable desktop plugin over
-a hosted web app. Matthew reviewed real agent runs, rejected hallucinated video
-interpretations, approved each release direction, and selected the
-demonstration-to-code workflow. The detailed record is linked below.
+verification for uncertain OCR; and make a local, privacy-preserving desktop
+plugin the primary product surface. Matthew reviewed real agent runs, rejected
+hallucinated video interpretations, approved each release direction, and
+selected the demonstration-to-code workflow. The detailed record is linked
+below.
 
 The reference flow uses GPT-5.6 in Codex to turn retrieved video evidence into a
 tested repository change. Keyframe supplies deterministic evidence; GPT-5.6
