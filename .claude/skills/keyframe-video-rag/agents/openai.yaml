@@ -1,6 +1,6 @@
 interface:
   display_name: "Keyframe Video RAG"
-  short_description: "Find and analyze timestamped video evidence"
-  default_prompt: "Use $keyframe-video-rag to preserve my topic, find a strongly relevant public video when I provide no source, and analyze it with timestamp citations."
+  short_description: "Fast, timestamped video and GIF evidence"
+  default_prompt: "Use $keyframe-video-rag to preserve my topic and requested evidence, analyze short videos in one pass when possible, and cite timestamps."
 policy:
   allow_implicit_invocation: false

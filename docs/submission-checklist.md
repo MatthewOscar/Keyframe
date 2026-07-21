@@ -1,7 +1,7 @@
 # Build Week submission checklist
 
 Last verified against the [official rules](https://openai.devpost.com/rules) on
-2026-07-20. The official page remains the source of truth.
+2026-07-21. The official page remains the source of truth.
 
 ## Implemented in the repository
 
@@ -43,7 +43,10 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 - [x] Commit and push v0.2.7 to `main`, then confirm the full CI matrix.
 - [x] Review the v0.2.8 duration-reconciliation and bounded-retrieval corrections
       and pass the local release gate.
-- [ ] Commit and push v0.2.8 to `main`, then confirm the full CI matrix.
+- [x] Commit and push v0.2.8 to `main`, then confirm the full CI matrix.
+- [ ] Review the v0.3.0 short-video single-pass contract, caption de-overlap,
+      and concise agent workflow; pass the local release gate.
+- [ ] Commit and push v0.3.0 to `main`, then confirm the full CI matrix.
 - [x] Create and push immutable tag `v0.1.0`.
 - [x] Create and push the verified agent-efficiency release tag `v0.1.3`.
 - [x] Create the PyPI project, configure Trusted Publishing, and publish the
@@ -66,8 +69,15 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
       `v0.2.6`, then confirm its PyPI and GitHub releases complete successfully.
 - [x] Create and push the topic-aware discovery correction release tag
       `v0.2.7`, then confirm its PyPI and GitHub releases complete successfully.
-- [ ] Create and push the duration-reconciliation and bounded-retrieval release
+- [x] Create and push the duration-reconciliation and bounded-retrieval release
       tag `v0.2.8`, then confirm its PyPI and GitHub releases complete successfully.
+- [ ] Create and push the final short-video single-pass release tag `v0.3.0`,
+      then confirm its PyPI and GitHub releases complete successfully.
+- [ ] Verify fresh Python 3.12 and 3.14 installs of v0.3.0 and run
+      `video-context-mcp doctor` in each environment.
+- [ ] Replace the development plugin with the immutable v0.3.0 marketplace
+      installation and run the short-video summary and exact-evidence regressions
+      in a fresh desktop conversation.
 - [ ] Install the tagged plugin in Codex and ChatGPT desktop and run the
       headline flow with Codex visibly configured to `gpt-5.6`.
 - [ ] Smoke-install the tagged release in Claude Code, Cursor, and Agy; approve
@@ -76,8 +86,9 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
       a public YouTube tutorial for the remote-ingest demo shot.
 - [ ] Run all ten prompts in `evals/cases.json` and record observed outcomes.
 - [ ] Run the Mac plugin regressions in `evals/mac-plugin-cases.json` and record
-      topic-aware discovery, attachment staging, provenance, warm-cache timing,
-      no-vision inline frame rendering, forward visual accuracy, and animated-GIF results.
+      short-video single-pass timing, exact-evidence fidelity, topic-aware discovery,
+      attachment staging, provenance, warm-cache timing, no-vision inline frame
+      rendering, forward visual accuracy, and animated-GIF results.
 - [ ] Record a clear, English-language narrated demo no longer than 2:59 that
       shows the working product and explicitly explains how Codex and GPT-5.6
       were used.

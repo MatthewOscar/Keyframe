@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.2.8",
-  "description": "Supplementary regressions for topic-aware public-video discovery, attachment staging, long-video retries, exact on-screen identity, reliable inline frame rendering, honest no-vision behavior, warm-cache latency, and animated GIFs.",
+  "suite": "keyframe-mac-plugin-v0.3.0",
+  "description": "Supplementary regressions for single-pass short videos, topic-aware public-video discovery, attachment staging, long-video retries, exact on-screen identity, reliable inline frame rendering, honest no-vision behavior, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
       "agent_total_wall_time_s",
@@ -14,6 +14,7 @@
   "variables": {
     "LOCAL_VIDEO": "A selected local recording with audio and no caption sidecar",
     "LONG_LOCAL_VIDEO": "A selected local recording between 30 minutes and 4 hours with audio and no caption sidecar",
+    "SHORT_PUBLIC_VIDEO": "The 7:28 GDB tutorial at https://www.youtube.com/watch?v=Dq8l1_-QgAc",
     "MOTHERBOARD_VIDEO": "The public Linus Tech Tips PC-build guide at https://youtu.be/s1fxZ-VWs2U, already indexed in the warm cache",
     "EXACT_IDENTITY_VIDEO": "A first-party macOS screen recording with audio that shows one issue being merely considered, then later shows a different issue while a mentor says it was fixed and merged; both issue identities are readable on screen",
     "ANIMATED_GIF": "A first-party animated GIF with at least three visibly distinct states",
@@ -39,6 +40,33 @@
         "cache_hit=true",
         "The ingest tool completes in under one second",
         "No duplicate full upgrade or native media analysis occurs"
+      ]
+    },
+    {
+      "id": "desktop-short-video-single-pass",
+      "model": "A lightweight desktop model",
+      "prompt": "Use Keyframe to give me a concise timestamped overview of {{SHORT_PUBLIC_VIDEO}}. Explain the demonstrated GDB workflow without adding generic material that is not in the video.",
+      "success_criteria": [
+        "Cold agent wall time is under 30 seconds",
+        "Calls video_ingest exactly once in fast mode and receives status=ready, a video_id, and a non-null evidence_bundle",
+        "Uses the bundle's complete compact transcript and retained-moment routing page directly",
+        "Does not call video_list_moments, video_get_transcript, video_search, video_get_frame, video_get_code, or full ingest merely to repeat evidence already in the receipt",
+        "Rolling automatic-caption phrases are not duplicated through equal-boundary or 10 ms bridge cues",
+        "Returns an accurate concise workflow with timestamps and does not describe uninspected visual details"
+      ]
+    },
+    {
+      "id": "desktop-short-video-exact-evidence",
+      "model": "A lightweight desktop model",
+      "prompt": "Use Keyframe to turn {{SHORT_PUBLIC_VIDEO}} into a reproducible GDB recipe. Include the buggy source line, corrected line, faulting instruction, and relevant register values only when actually supported by transcript or inspected frame evidence; cite timestamps.",
+      "success_criteria": [
+        "Cold agent wall time is under 45 seconds",
+        "Calls video_ingest exactly once and uses evidence_bundle before deciding which exact evidence remains necessary",
+        "Does not repeat the bundle with video_list_moments or a compact transcript call",
+        "Uses no more than one search, one bounded exact-transcript call, and two combined frame/code calls",
+        "Preserves the user's exact technical-evidence request despite the short duration",
+        "Includes source lines, instruction, or registers only when the selected timestamp-local evidence supports them; otherwise labels them unverified",
+        "Makes no duplicate frame call and does not upgrade to full unless probe evidence plus one targeted seek cannot settle a required visual claim"
       ]
     },
     {

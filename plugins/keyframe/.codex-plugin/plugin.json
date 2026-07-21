@@ -1,6 +1,6 @@
 {
   "name": "keyframe",
-  "version": "0.2.8",
+  "version": "0.3.0",
   "description": "Analyze supplied or host-discovered videos and animated GIFs locally, then retrieve timestamped transcript, OCR, code, and frames through MCP.",
   "author": {
     "name": "Matthew Wyatt",
@@ -22,7 +22,7 @@
   "interface": {
     "displayName": "Keyframe",
     "shortDescription": "Search what videos say and GIFs show",
-    "longDescription": "Keyframe preserves the user's topic while the host discovers a relevant public video, or accepts a supplied source directly. It then locally indexes videos and animated GIFs and retrieves timestamped transcript, on-screen text, reconstructed code, and source frames for verification.",
+    "longDescription": "Keyframe preserves the user's topic and requested evidence while locally indexing videos and animated GIFs. Short videos return a single-pass evidence receipt; targeted tools retrieve timestamped transcript, on-screen text, reconstructed code, and source frames for verification.",
     "developerName": "Matthew Wyatt",
     "category": "Developer Tools",
     "capabilities": [
@@ -33,6 +33,7 @@
     ],
     "websiteURL": "https://github.com/MatthewOscar/Keyframe",
     "defaultPrompt": [
+      "Summarize this short video from its single-pass evidence receipt, retrieving only exact or visual evidence I request.",
       "Find a strongly relevant public video about this topic, analyze the best match with Keyframe, and cite timestamps.",
       "Find code shown in this video and verify it against the source frame.",
       "Use this video to implement the demonstrated change and run its tests."

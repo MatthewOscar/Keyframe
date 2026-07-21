@@ -1092,6 +1092,51 @@ def test_compact_transcript_deoverlaps_only_rolling_automatic_captions(
     assert compact.segments[0].segment_id == f"{ingested.video_id}:compact:0"
 
 
+def test_compact_transcript_deoverlaps_boundary_bridged_youtube_cues(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire = _fake_timed_acquirer(
+        (
+            AcquiredTranscriptSegment(
+                2.50,
+                2.51,
+                "install the CPU",
+                origin="automatic_captions",
+            ),
+            AcquiredTranscriptSegment(
+                2.51,
+                4.37,
+                "install the CPU align the triangle",
+                origin="automatic_captions",
+            ),
+            AcquiredTranscriptSegment(
+                4.37,
+                4.38,
+                "align the triangle",
+                origin="automatic_captions",
+            ),
+            AcquiredTranscriptSegment(
+                4.38,
+                6.35,
+                "align the triangle lower the socket arm",
+                origin="automatic_captions",
+            ),
+        ),
+        duration_s=8,
+    )
+    service = _service(settings, acquire)
+    ingested = service.ingest(str(source), transcript_mode=TranscriptMode.AUTO)
+
+    compact = service.get_transcript(ingested.video_id, view=TranscriptView.COMPACT)
+
+    assert len(compact.segments) == 1
+    assert compact.segments[0].text == (
+        "install the CPU align the triangle lower the socket arm"
+    )
+
+
 def test_compact_transcript_preserves_repetition_outside_automatic_rolls(
     tmp_path: Path,
 ) -> None:
@@ -1113,6 +1158,110 @@ def test_compact_transcript_preserves_repetition_outside_automatic_rolls(
 
     assert compact.segments[0].text == "repeat this repeat this again again"
     assert compact.segments[0].source == "mixed"
+
+
+def test_short_video_ingest_prefetches_same_bundle_on_cold_and_cache_hit(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, calls = _fake_acquirer(duration_s=600.0)
+    service = _service(settings, acquire)
+
+    cold = service.ingest(str(source), transcript_mode=TranscriptMode.CAPTIONS)
+    warm = service.ingest(str(source), transcript_mode=TranscriptMode.CAPTIONS)
+    restarted = _service(settings, acquire).ingest(
+        str(source), transcript_mode=TranscriptMode.CAPTIONS
+    )
+
+    assert cold.cache_hit is False
+    assert warm.cache_hit is True
+    assert restarted.cache_hit is True
+    assert len(calls) == 1
+    assert cold.evidence_bundle is not None
+    assert warm.evidence_bundle == cold.evidence_bundle
+    assert restarted.evidence_bundle == cold.evidence_bundle
+    bundle = cold.evidence_bundle
+    assert bundle.scope_start_s == 0
+    assert bundle.scope_end_s == 600
+    assert bundle.transcript is not None
+    assert bundle.transcript.view is TranscriptView.COMPACT
+    assert bundle.transcript.has_more is False
+    assert bundle.transcript.next_cursor is None
+    assert bundle.transcript_omitted_reason is None
+    assert bundle.moments.video_id == cold.video_id
+    assert bundle.moments.visual_coverage is VisualCoverage.PROBE
+
+
+def test_short_video_bundle_preserves_moment_pagination_and_size_guard(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer(
+        transcript_texts=("x" * 17_000,),
+        duration_s=600.0,
+    )
+    kinds = tuple("slide" for _ in range(14))
+    service = _service(settings, acquire, kinds=kinds)
+
+    ingested = service.ingest(
+        str(source),
+        mode=IngestMode.FULL,
+        transcript_mode=TranscriptMode.CAPTIONS,
+    )
+
+    assert ingested.evidence_bundle is not None
+    bundle = ingested.evidence_bundle
+    assert bundle.transcript is None
+    assert bundle.transcript_omitted_reason == "size_limit"
+    assert len(bundle.moments.moments) == 12
+    assert bundle.moments.has_more is True
+    assert bundle.moments.next_cursor is not None
+    next_page = service.list_moments(
+        ingested.video_id,
+        start_s=0.0,
+        end_s=600.0,
+        cursor=bundle.moments.next_cursor,
+        limit=12,
+    )
+    assert len(next_page.moments) == 2
+    assert next_page.has_more is False
+
+
+@pytest.mark.parametrize(
+    ("duration_s", "expects_bundle"),
+    ((600.0, True), (600.001, False)),
+)
+def test_short_video_bundle_duration_boundary(
+    tmp_path: Path,
+    duration_s: float,
+    expects_bundle: bool,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer(duration_s=duration_s)
+    service = _service(settings, acquire)
+
+    ingested = service.ingest(str(source), transcript_mode=TranscriptMode.CAPTIONS)
+
+    assert (ingested.evidence_bundle is not None) is expects_bundle
+
+
+def test_short_video_without_transcript_keeps_visual_routing(
+    tmp_path: Path,
+) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, _calls = _fake_acquirer(transcript_texts=(), duration_s=30.0)
+    service = _service(settings, acquire)
+
+    ingested = service.ingest(str(source), transcript_mode=TranscriptMode.NONE)
+
+    assert ingested.evidence_bundle is not None
+    assert ingested.evidence_bundle.transcript is None
+    assert ingested.evidence_bundle.transcript_omitted_reason == "unavailable"
+    assert ingested.evidence_bundle.moments.moments
 
 
 def test_compact_transcript_time_bounds_select_minute_bins(tmp_path: Path) -> None:

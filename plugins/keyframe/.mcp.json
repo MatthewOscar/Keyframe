@@ -6,7 +6,7 @@
         "--python",
         "3.12",
         "--from",
-        "video-context-mcp[whisper]==0.2.8",
+        "video-context-mcp[whisper]==0.3.0",
         "video-context-mcp",
         "serve",
         "--transport",

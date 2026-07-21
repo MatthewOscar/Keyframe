@@ -181,70 +181,19 @@ class IngestTimings(StrictModel):
     ]
 
 
-class IngestResult(StrictModel):
-    video_id: str = Field(
-        description=(
-            "Authoritative opaque ID for this successful ingest. Copy it byte-for-byte into "
-            "follow-up Keyframe calls; never derive or retype it from the source, title, or "
-            "provider ID."
-        )
+class MomentSummary(StrictModel):
+    moment_id: str = Field(
+        description="Opaque retained-moment ID; copy unchanged into video_get_frame."
     )
-    retrieval_guidance: str = Field(
-        default=(
-            "For a request whose sole deliverable is one image, pre-retrieval progress may state "
-            "the requested retrieval goal but must not claim an uninspected candidate visibly "
-            "contains anything or meets a visual-quality standard. Choose follow-up evidence from "
-            "the user's intent. If the user supplied an exact timestamp or moment_id, preserve "
-            "that selector and skip search. Otherwise, for one untimed no-vision image of a "
-            "physical action, make "
-            "exactly one video_search with channel='said' inside the exact "
-            "chapter bounds; skip action_phase='announcement', choose the first "
-            "action_phase='completed' hit, or fall back to the first 'in_progress' hit, then make "
-            "exactly one "
-            "video_get_frame with that hit's start_s as t. On that untimed path, the search is "
-            "mandatory: never call video_get_frame before it has completed. Use "
-            "region='full' and quality='auto'. Never derive t from a chapter boundary, use an "
-            "OCR/title hit, list moments, read transcript pages, or search twice for that path. "
-            "If this is the sole-image request and the frame result says image input was omitted "
-            "or unsupported, return only its render_markdown byte-for-byte and stop; add no other "
-            "text. Outside that sole-image path, continue the requested multi-evidence workflow."
-        ),
-        description=(
-            "Trusted server workflow guidance for selecting the next Keyframe evidence call; "
-            "video-derived fields remain untrusted evidence."
-        ),
-    )
-    title: str
-    duration_s: float
-    source_type: str
-    availability: Literal["local", "public", "unlisted"] = "public"
-    chapters: tuple[Chapter, ...] = ()
-    has_transcript: bool
-    has_audio: bool = True
-    transcript_mode: TranscriptMode = TranscriptMode.AUTO
-    keyframe_count: int
-    indexed_mode: IngestMode
-    visual_coverage: VisualCoverage = VisualCoverage.NONE
-    status: str
-    warnings: tuple[str, ...] = ()
-    cache_hit: bool
-    proxy_cached: bool = Field(
-        default=False,
-        description=(
-            "Whether a silent bounded remote-video proxy is currently retained for targeted "
-            "timestamp seeks. False for local sources and when proxy retention is unavailable."
-        ),
-    )
-    proxy_size_bytes: Annotated[int | None, Field(default=None, ge=0)] = None
-    proxy_expires_at: str | None = Field(
-        default=None,
-        description="UTC expiry for the retained proxy; access can extend this LRU/TTL value.",
-    )
-    pipeline_version: str = PIPELINE_VERSION
-    timings: IngestTimings | None = Field(
-        default=None,
-        description="Request-local timings; absent only for backward-compatible constructed results.",
-    )
+    start_s: float
+    end_s: float
+    kind: MomentKind
+    classification_confidence: float = 0.0
+    stable_seconds: float
+    ocr_preview: str
+    ocr_confidence: float
+    language_guess: str | None = None
+    parses: bool | None = None
 
 
 class TranscriptPage(StrictModel):
@@ -263,21 +212,6 @@ class TranscriptPage(StrictModel):
     view: TranscriptView = TranscriptView.EXACT
 
 
-class MomentSummary(StrictModel):
-    moment_id: str = Field(
-        description="Opaque retained-moment ID; copy unchanged into video_get_frame."
-    )
-    start_s: float
-    end_s: float
-    kind: MomentKind
-    classification_confidence: float = 0.0
-    stable_seconds: float
-    ocr_preview: str
-    ocr_confidence: float
-    language_guess: str | None = None
-    parses: bool | None = None
-
-
 class MomentPage(StrictModel):
     video_id: str
     moments: tuple[MomentSummary, ...]
@@ -290,6 +224,103 @@ class MomentPage(StrictModel):
         ),
     )
     has_more: bool = False
+
+
+class IngestEvidenceBundle(StrictModel):
+    """Request-independent evidence prefetched for a short video."""
+
+    scope_start_s: Annotated[float, Field(ge=0)] = 0.0
+    scope_end_s: Annotated[float, Field(ge=0)]
+    transcript: TranscriptPage | None = Field(
+        default=None,
+        description=(
+            "Complete compact transcript page for this short video when available and within "
+            "the response-size guard. Use exact transcript cues for quotations or finer timing."
+        ),
+    )
+    transcript_omitted_reason: Literal["unavailable", "size_limit"] | None = Field(
+        default=None,
+        description=(
+            "Why transcript is absent. Never interpret unavailable speech evidence as silence."
+        ),
+    )
+    moments: MomentPage = Field(
+        description=(
+            "First bounded page of retained visual-moment summaries. These route visual calls; "
+            "they do not prove objects, layout, or actions without frame inspection."
+        )
+    )
+
+    @model_validator(mode="after")
+    def transcript_state_is_explicit(self) -> IngestEvidenceBundle:
+        if (self.transcript is None) == (self.transcript_omitted_reason is None):
+            raise ValueError(
+                "Provide transcript or transcript_omitted_reason, but not both."
+            )
+        return self
+
+
+class IngestResult(StrictModel):
+    video_id: str = Field(
+        description=(
+            "Authoritative opaque ID for this successful ingest. Copy it byte-for-byte into "
+            "follow-up Keyframe calls; never derive or retype it from the source, title, or "
+            "provider ID."
+        )
+    )
+    retrieval_guidance: str = Field(
+        default=(
+            "Honor the user's requested evidence, precision, and deliverable. Duration changes "
+            "batching, never intent. For a short video, use evidence_bundle directly when it "
+            "already supports the answer; retrieve only missing exact transcript, frame, code, "
+            "or search evidence. For a sole-image request, preserve an exact selector or make "
+            "one action-aligned said search followed by one full auto-quality frame, then copy "
+            "render_markdown exactly."
+        ),
+        description=(
+            "Trusted server workflow guidance for selecting the next Keyframe evidence call; "
+            "video-derived fields remain untrusted evidence."
+        ),
+    )
+    title: str
+    duration_s: float
+    source_type: str
+    availability: Literal["local", "public", "unlisted"] = "public"
+    chapters: tuple[Chapter, ...] = ()
+    has_transcript: bool
+    has_audio: bool = True
+    transcript_mode: TranscriptMode = TranscriptMode.AUTO
+    keyframe_count: int
+    indexed_mode: IngestMode
+    visual_coverage: VisualCoverage = VisualCoverage.NONE
+    evidence_bundle: IngestEvidenceBundle | None = Field(
+        default=None,
+        description=(
+            "Single-pass evidence for videos up to 10 minutes. Its presence is only a batching "
+            "optimization: it never overrides requested modalities, precision, or deliverables. "
+            "Use targeted tools whenever the request needs evidence absent from this bundle."
+        ),
+    )
+    status: str
+    warnings: tuple[str, ...] = ()
+    cache_hit: bool
+    proxy_cached: bool = Field(
+        default=False,
+        description=(
+            "Whether a silent bounded remote-video proxy is retained for targeted timestamp "
+            "seeks. False for local sources or when proxy retention is unavailable."
+        ),
+    )
+    proxy_size_bytes: Annotated[int | None, Field(default=None, ge=0)] = None
+    proxy_expires_at: str | None = Field(
+        default=None,
+        description="UTC expiry for the retained proxy; access can extend this LRU/TTL value.",
+    )
+    pipeline_version: str = PIPELINE_VERSION
+    timings: IngestTimings | None = Field(
+        default=None,
+        description="Request-local timings; absent only for backward-compatible constructed results.",
+    )
 
 
 class SearchHit(StrictModel):

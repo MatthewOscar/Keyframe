@@ -1,7 +1,7 @@
 {
   "name": "keyframe",
   "displayName": "Keyframe",
-  "version": "0.2.8",
+  "version": "0.3.0",
   "description": "Analyze supplied or host-discovered videos and animated GIFs locally, then retrieve timestamped transcript, OCR, code, and frames through MCP.",
   "author": {
     "name": "Matthew Wyatt",

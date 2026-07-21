@@ -7,6 +7,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
 
+from video_context_mcp.captions import caption_token_overlap, is_rolling_caption_pair
 from video_context_mcp.errors import CacheError
 from video_context_mcp.models import (
     Chapter,
@@ -24,12 +25,9 @@ from video_context_mcp.models import (
 
 SCHEMA_VERSION = 5
 _TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
-_TOKEN_EDGE_RE = re.compile(r"^[^\w]+|[^\w]+$", re.UNICODE)
 _LOCAL_VIDEO_ID_RE = re.compile(r"local-[0-9a-f]{16}\Z")
 _SEARCH_SPEECH_CONTEXT_SECONDS = 4.0
 _SEARCH_SPEECH_CONTEXT_CHARS = 480
-_ROLLING_CAPTION_BOUNDARY_EPSILON_SECONDS = 0.02
-_ROLLING_CAPTION_BRIDGE_MAX_SECONDS = 0.05
 
 
 class KeyframeStore:
@@ -868,7 +866,7 @@ def _speech_context(
         if (
             source == "automatic_captions"
             and previous_source == "automatic_captions"
-            and _is_rolling_caption_pair(
+            and is_rolling_caption_pair(
                 previous_start_s=previous_start_s,
                 previous_end_s=previous_end_s,
                 previous_text=previous_text,
@@ -877,7 +875,7 @@ def _speech_context(
                 current_text=text,
             )
         ):
-            overlap = _caption_token_overlap(previous_tokens, tokens)
+            overlap = caption_token_overlap(previous_tokens, tokens)
         merged.extend(tokens[overlap:])
         previous_tokens = tokens
         previous_start_s = float(row["start_s"])
@@ -926,42 +924,6 @@ def _speech_action_phase(cue_text: str | None) -> SpeechActionPhase:
     if any(re.search(pattern, normalized) for pattern in in_progress_patterns):
         return SpeechActionPhase.IN_PROGRESS
     return SpeechActionPhase.UNKNOWN
-
-
-def _caption_token_overlap(previous: Sequence[str], current: Sequence[str]) -> int:
-    previous_normalized = [_normalize_caption_token(token) for token in previous]
-    current_normalized = [_normalize_caption_token(token) for token in current]
-    for length in range(min(len(previous), len(current)), 0, -1):
-        if previous_normalized[-length:] == current_normalized[:length]:
-            return length
-    return 0
-
-
-def _is_rolling_caption_pair(
-    *,
-    previous_start_s: float,
-    previous_end_s: float,
-    previous_text: str,
-    current_start_s: float,
-    current_end_s: float,
-    current_text: str,
-) -> bool:
-    if current_start_s < previous_end_s:
-        return True
-    if abs(current_start_s - previous_end_s) > _ROLLING_CAPTION_BOUNDARY_EPSILON_SECONDS:
-        return False
-    previous_duration = max(0.0, previous_end_s - previous_start_s)
-    current_duration = max(0.0, current_end_s - current_start_s)
-    return (
-        min(previous_duration, current_duration) <= _ROLLING_CAPTION_BRIDGE_MAX_SECONDS
-        or "\n" in previous_text
-        or "\n" in current_text
-    )
-
-
-def _normalize_caption_token(token: str) -> str:
-    stripped = _TOKEN_EDGE_RE.sub("", token.casefold())
-    return stripped or token.casefold()
 
 
 def _fts_queries(query: str) -> tuple[str, str]:

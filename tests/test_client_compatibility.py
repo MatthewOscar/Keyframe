@@ -148,8 +148,10 @@ def test_plugin_manifests_reference_client_specific_mcp_configs() -> None:
     assert codex["author"]["name"] == "Matthew Wyatt"
     assert codex["interface"]["developerName"] == "Matthew Wyatt"
     assert codex["interface"]["shortDescription"] == "Search what videos say and GIFs show"
-    discovery_prompt = codex["interface"]["defaultPrompt"][0]
-    assert len(codex["interface"]["defaultPrompt"]) == 3
+    short_prompt, discovery_prompt, *_ = codex["interface"]["defaultPrompt"]
+    assert len(codex["interface"]["defaultPrompt"]) == 4
+    assert "single-pass evidence receipt" in short_prompt
+    assert "only exact or visual evidence I request" in short_prompt
     assert "strongly relevant public video about this topic" in discovery_prompt
     assert "analyze the best match with Keyframe" in discovery_prompt
     assert claude["author"]["name"] == "Matthew Wyatt"
@@ -226,150 +228,59 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     normalized_skill = " ".join(contents[0].split())
     assert contents[0] == contents[1] == contents[2]
     assert contents[0].startswith("---\nname: keyframe-video-rag\ndescription: Use Keyframe")
-    assert "A Keyframe invocation selects the analysis capability" in contents[0]
-    assert "must not change the ordinary meaning of the user's topic" in contents[0]
-    assert "Discover a source without changing the topic" in contents[0]
-    assert '"build my own processor"\n   means a CPU' in contents[0]
-    assert "use the host's normal web search" in contents[0]
-    assert "at most three individual public" in contents[0]
-    assert "direct watch URL for one public video" in contents[0]
-    assert "product landing page is not an ingest candidate" in contents[0]
-    assert "`video_search` without a `video_id` searches only" in contents[0]
-    assert "Keyword overlap, a passing mention, or an adjacent technology" in contents[0]
-    assert "duration-guard retry may repeat the same source" in contents[0]
-    assert "ingest call for a second URL" in contents[0]
-    assert "never auto-ingest an adjacent fallback" in contents[0]
-    assert (
-        "When every direct-video candidate is weak or adjacent, do not ingest" in normalized_skill
-    )
-    assert "ask the user to provide one" in normalized_skill
-    assert "Attribute web discovery separately" in normalized_skill
-    assert "requests must not open this skill" in contents[0]
-    assert "call Keyframe MCP directly and never use browser or shell tools" in contents[0]
-    assert "Use Keyframe for multi-evidence video or animated-GIF analysis" in contents[0]
-    assert "explicitly invoked requests to find and analyze videos about a topic" in contents[0]
-    assert "Show or share one frame: overriding fast path" in contents[0]
-    assert "Do not call `video_list_moments`, `video_get_transcript`, or" in contents[0]
-    assert "Call `video_get_frame` exactly once" in contents[0]
-    assert "progress update may state the requested retrieval goal" in contents[0]
-    assert "must not claim that an uninspected candidate" in contents[0]
-    assert "requested quality" in contents[0]
-    assert "entire final response and stop" in contents[0]
-    assert "Add no prefix, suffix, bullet, timestamp/provenance line" in contents[0]
-    assert "Use when Codex must understand" not in contents[0]
-    assert "For each source, make at most one successful fast ingest" in contents[0]
-    assert "Use a fixed multi-evidence budget" in contents[0]
-    assert "four combined visual calls across `video_get_frame` and" in contents[0]
-    assert "Balanced tasks use no more than two visual calls" in contents[0]
-    assert (
-        "exact transcript call must follow search and span no more than 180 seconds" in contents[0]
-    )
-    assert "Direct\n   transcript/export requests and compact whole-video summaries" in contents[0]
-    assert "code crop and full frame of the same retained image consume two" in contents[0]
-    assert "reserve two of the task-wide four visual calls" in normalized_skill
-    assert "cannot substitute for either requested application/UI state" in contents[0]
-    assert "same timestamp or image" in normalized_skill
-    assert "never submit duplicate or equivalent candidates concurrently" in normalized_skill
-    assert "later image qualifies only when it visibly establishes" in contents[0]
-    assert "label the missing state unverified" in normalized_skill
-    assert "Do not spend a visual call on an issue, ticket, specification, or title" in contents[0]
-    assert "same overlapping elements with their visible foreground" in normalized_skill
-    assert "Never exhaust probe candidates and then repeat the same scan" in contents[0]
-    assert "does not\n   reset the four-search, two-transcript" in contents[0]
-    assert "Do not split, restage, or reconstruct the source" in contents[0]
-    assert "Skip generic search for a whole-video summary" in contents[0]
-    assert 'Map explicit requests for "quick," "fast," "overview," or "gist"' in contents[0]
-    assert "generic whole-video summary over 30 minutes" in contents[0]
-    assert "use exactly one routing" in contents[0]
-    assert '`view="compact"`' in contents[0]
-    assert "`limit=200`" in contents[0]
-    assert "`proxy_cached=false`" in contents[0]
-    assert "`refresh=true`" in contents[0]
-    assert "at most six transcript windows" in contents[0]
-    assert "each no longer than 90 seconds" in contents[0]
-    assert "at most two consequential probe" in contents[0]
-    assert "Do not full-upgrade merely because" in contents[0]
-    assert '`quality="auto"`' in contents[0]
-    assert "evidence_quality" in contents[0]
-    assert "one targeted seek cannot settle" in contents[0]
-    assert "Do not fan transcript pages or windows out to multiple agents" in contents[0]
-    assert "count Keyframe calls" in contents[0]
-    assert "copy the" in contents[0]
-    assert "`render_markdown` byte-for-byte" in contents[0]
-    assert "including its `<` and `>` destination delimiters" in contents[0]
-    assert "not open a browser, use terminal or shell tools" in contents[0]
-    assert "Never retrieve the same `moment_id`" in contents[0]
-    assert 'never request `quality="source"` for a remote video' in contents[0]
-    assert 'use `region="full"`, never' in contents[0]
-    assert "Align a whole-object frame to the demonstrated action" in contents[0]
-    assert "announcement timestamp as visual proof" in contents[0]
-    assert "`video_get_frame` is the only visual retrieval tool" in contents[0]
-    assert "Use `context` to distinguish an action" in contents[0]
-    assert "prohibitions apply at every phase" in contents[0]
-    assert "never test a source URL or path in downstream tools" in contents[0]
-    assert "exactly one frame call" in contents[0]
-    assert "without image input cannot evaluate candidates" in contents[0]
-    assert "It must not\n   judge visual quality or infer components" in contents[0]
-    assert "`render_markdown` the entire final response; add no other text" in contents[0]
-    assert (
-        "When this skill applies, open only through the exact host-provided locator" in contents[0]
-    )
-    assert "marketplace/keyframe/version/skills/keyframe-video-rag/SKILL.md" in contents[0]
-    assert "do not search for another copy" in contents[0]
-    assert "Copy the returned structured `video_id` byte-for-byte" in contents[0]
-    assert "never wait for a" in contents[0]
-    assert "follow-up such as" in contents[0]
-    assert "Pass that episode's `start_s`/`end_s`" in contents[0]
-    assert "never join an ID or" in contents[0]
-    assert "`requested_t_covered`" in contents[0]
-    assert "`Tesseract OCR:`" in contents[0]
-    assert "temporally local evidence" in contents[0]
-    verify_visuals = contents[0].split("## Verify visuals", maxsplit=1)[1]
-    exact_selector_exception = (
-        "If the user supplied an exact timestamp or `moment_id`, preserve that selector and "
-        "skip search."
-    )
-    strict_search_sequence = "For a no-vision show/share request about an action"
-    assert exact_selector_exception in verify_visuals
-    assert verify_visuals.index(exact_selector_exception) < verify_visuals.index(
-        strict_search_sequence
-    )
-    assert "sole requested deliverable is one image" in contents[0]
+    assert len(contents[0]) < 10_000
+    assert len(contents[0].splitlines()) < 150
+    for requirement in (
+        "Resolve the topic from the user's words",
+        "build my own processor",
+        "means a CPU",
+        "Duration changes how evidence is batched, never what evidence the user requested",
+        "at most three individual public videos",
+        "`video_search` without `video_id` searches only the local Keyframe library",
+        "every match is adjacent or weak",
+        "Attribute host web discovery separately",
+        "Copy the returned `video_id` byte-for-byte",
+        "Do not split, restage, or reconstruct the source",
+        "GIFs are visual-only",
+        "Use the short-video single-pass receipt",
+        "For an ordinary summary or explanation, answer from this receipt",
+        "Do not call `video_list_moments` or request the same compact transcript",
+        "exact wording or fine timing",
+        "objects, layout, actions, UI state",
+        "If the bundle omits its transcript for `size_limit`",
+        "generic whole-video summary over 10 minutes",
+        '`video_get_transcript(view="compact"',
+        "normally no more than 180 seconds",
+        "Direct transcript or export requests and user-specified exact time ranges",
+        "without requiring search",
+        "two visual calls for a balanced task",
+        "may use four visual calls",
+        "one full upgrade",
+        "a probe miss never proves absence",
+        "Never retrieve the same selector or equivalent image twice",
+        "never request source quality for a remote video",
+        "Preserve an exact selector supplied by the user",
+        "For a sole request to show or share one image",
+        "`render_markdown` byte-for-byte as the entire response",
+        "must not infer objects or layout",
+        "`Tesseract OCR:`",
+        "record total agent wall time and Keyframe call count separately",
+    ):
+        assert requirement in normalized_skill
+
     server_source = (ROOT / "src/video_context_mcp/server.py").read_text(encoding="utf-8")
-    assert "Ingest each source with mode='fast' once" in server_source
-    assert "one mode='full' upgrade per source" in server_source
-    assert "MULTI-EVIDENCE SYNTHESIS BUDGET" in server_source
-    assert "four searches, two transcript calls, and four combined visual" in server_source
-    assert "Exact transcript calls must follow search" in server_source
-    assert "Direct transcript/export requests and compact whole-video summaries" in server_source
-    assert "BEFORE/AFTER VISUAL PAIRS (multi-evidence only)" in server_source
-    assert "Make comparison calls sequentially" in server_source
-    assert "later image qualifies only when it visibly establishes" in server_source
-    assert "not spend a visual call on an issue, ticket, specification" in server_source
-    assert "same overlapping elements with their visible foreground" in server_source
-    assert "code crop and full frame of the same retained image" in server_source
-    assert "never exhaust probe candidates" in server_source
-    assert "do not split or restage the source" in server_source
-    assert "exact structured video_id byte-for-byte" in server_source
-    assert "instead of searching plugin caches" in server_source
-    assert "view='compact'" in server_source
-    assert "copy render_markdown byte-for-byte" in server_source
-    assert "SHOW OR SHARE VIDEO IMAGES" in server_source
-    assert "CODE OR TERMINAL CONTENT ONLY" in server_source
-    assert "channel='all', never 'both'" in server_source
-    assert "coherent nearby context" in server_source
-    assert "progress update may state the requested retrieval goal" in server_source
-    assert "never infer objects or layout from " in server_source
-    assert '"OCR. Before retrieval' in server_source
-    assert "SINGLE-IMAGE SAFETY" in server_source
-    assert "SINGLE-IMAGE RESPONSE CONTRACT" in server_source
-    assert "render_markdown byte-for-byte your entire" in server_source
-    assert "TOPIC DISCOVERY CONTRACT" in server_source
-    assert "does not make Keyframe the subject" in server_source
-    assert "Keyframe does not search the public web" in server_source
-    assert "central subject and instructional task strongly match" in server_source
-    assert "With video_id omitted this" in server_source
-    assert "existing local Keyframe library" in server_source
+    for requirement in (
+        "REQUEST FIDELITY",
+        "Video duration changes batching only",
+        "the ingest evidence_bundle replaces redundant initial moment-list",
+        "preserve an exact selector and skip search",
+        "searches only the local Keyframe library",
+        "Never repeat the same visual selector",
+        "Copy render_markdown exactly",
+    ):
+        assert requirement in server_source
+    assert "_MULTI_EVIDENCE_BUDGET_CONTRACT" not in server_source
+    assert "_SINGLE_IMAGE_RESPONSE_CONTRACT" not in server_source
 
 
 def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
@@ -407,7 +318,8 @@ def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
     assert skill_ui_contents[0] == skill_ui_contents[1] == skill_ui_contents[2]
     assert "allow_implicit_invocation: false" in skill_ui_contents[0]
     assert "preserve my topic" in skill_ui_contents[0]
-    assert "find a strongly relevant public video" in skill_ui_contents[0]
+    assert "preserve my topic and requested evidence" in skill_ui_contents[0]
+    assert "analyze short videos in one pass when possible" in skill_ui_contents[0]
 
     assert forward["model"] == "image-capable GPT-5.6"
     forward_criteria = " ".join(forward["success_criteria"])
@@ -415,6 +327,34 @@ def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
     assert "matches the displayed frame" in forward_criteria
     assert "between 4719 and 4741 seconds" in forward_criteria
     assert "render_markdown byte-for-byte" in forward_criteria
+
+
+def test_mac_plugin_eval_covers_short_video_single_pass_and_exact_evidence() -> None:
+    suite = _load(ROOT / "evals" / "mac-plugin-cases.json")
+    cases = {case["id"]: case for case in suite["cases"]}
+    assert "7:28 GDB tutorial" in suite["variables"]["SHORT_PUBLIC_VIDEO"]
+
+    summary = " ".join(cases["desktop-short-video-single-pass"]["success_criteria"])
+    for requirement in (
+        "under 30 seconds",
+        "video_ingest exactly once",
+        "non-null evidence_bundle",
+        "Does not call video_list_moments, video_get_transcript, video_search",
+        "Rolling automatic-caption phrases are not duplicated",
+        "does not describe uninspected visual details",
+    ):
+        assert requirement in summary
+
+    exact = " ".join(cases["desktop-short-video-exact-evidence"]["success_criteria"])
+    for requirement in (
+        "under 45 seconds",
+        "uses evidence_bundle",
+        "Does not repeat the bundle",
+        "one bounded exact-transcript call",
+        "Preserves the user's exact technical-evidence request",
+        "labels them unverified",
+    ):
+        assert requirement in exact
 
 
 def test_mac_plugin_eval_covers_topic_aware_discovery() -> None:

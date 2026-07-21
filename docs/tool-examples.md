@@ -18,9 +18,12 @@ come from prior responses; clients must preserve opaque cursors unchanged.
 A fresh fast-only index retains at most 12 sparse visual moments and returns
 `visual_coverage="probe"`; an existing full index can satisfy a later fast
 request. Branch on the returned coverage, `has_audio`, and transcript
-availability. Call `video_list_moments` once with `kind="any"` and `limit=12` to
-read its routing summaries; this does not load images. A probe miss is not
-evidence that something was absent.
+availability. For videos up to 10 minutes, the receipt also contains
+`evidence_bundle`. It carries a complete compact transcript page when available
+and within the response-size guard, plus the first 12-moment routing page. Use
+that bundle directly when it satisfies the request; do not repeat it with
+`video_list_moments` or a compact-transcript call. A probe miss is not evidence
+that something was absent.
 
 The default 1,800-second value is an explicit resource guard, not a format
 limit. If Keyframe reports a longer duration and supplies an exact
@@ -81,7 +84,15 @@ change because they are not part of cursor scope.
 
 ## Summarize a whole video efficiently
 
-For a generic video over 30 minutes, use the descriptive ingest chapters as the
+For a generic video up to 10 minutes, first inspect `evidence_bundle`. An
+ordinary summary can finish from the ingest receipt when its compact transcript
+is present and no statement depends on an uninspected visual. If
+`transcript_omitted_reason="size_limit"`, make one compact transcript call. If
+it is `"unavailable"`, do not infer silence. Duration never overrides the
+request: exact quotations, named on-screen values, code, images, and visual
+comparisons still require the corresponding targeted evidence.
+
+For a generic video over 10 minutes, use the descriptive ingest chapters as the
 outline, one `video_list_moments` request with `kind="any"` and `limit=12`, and
 one `video_get_transcript` request with `view="compact"` and `limit=200`. Follow
 a compact cursor only when the fixed runtime exceeds that page. Inspect at most

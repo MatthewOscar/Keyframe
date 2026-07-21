@@ -24,23 +24,26 @@ There is no model call inside the server.”
 
 **On screen:** Run `video-context-mcp doctor`, then ask Codex to ingest the
 first-party synthetic fixture from its prepared public YouTube upload in fast
-mode. Keep the URL and returned metadata visible.
+mode. Keep the URL, request timing, and returned `evidence_bundle` visible.
 
 **Voiceover:** “One isolated `uvx` command checks the native tools. I give
-Keyframe a public tutorial URL; fast mode captures captions plus a bounded
-visual probe, then reports that its coverage is partial. A repeated ingest
+Keyframe a public tutorial URL. Because this clip is short, one fast ingest
+returns its de-overlapped transcript and bounded visual inventory together.
+Duration changes the batching—not the evidence I ask for—and a repeated ingest
 reuses the cache.”
 
 ## 0:52–1:18 — Search “said” versus “shown”
 
-**On screen:** List the sparse probe inventory without loading its images.
-Search the same concept first with `channel="said"`, then `channel="shown"`.
-Highlight different timestamped hits and `visual_coverage="probe"`.
+**On screen:** Expand the receipt's sparse probe inventory without loading its
+images. Then deliberately demonstrate search by querying the same concept first
+with `channel="said"`, then `channel="shown"`. Highlight different timestamped
+hits and `visual_coverage="probe"`.
 
 **Voiceover:** “The spoken explanation and the on-screen implementation are
-separate search channels. The scout tells the skill when captions are not
-enough; for this code sequence it escalates to full ingestion, groups stable
-scenes, and replaces the partial visual index atomically.”
+separate search channels. The initial receipt was enough for an overview; this
+code question explicitly needs stronger visual evidence, so the skill escalates
+to full ingestion, groups stable scenes, and replaces the partial index
+atomically.”
 
 ## 1:18–1:44 — Verify code visually
 
@@ -83,6 +86,8 @@ what was shown, and ship what was taught.”
 - Configure Codex to use GPT-5.6 and make the model name visible once.
 - Warm only dependency downloads; do not pre-populate the video cache for the
   first-ingest shot.
+- Confirm the first short-video ingest returns `evidence_bundle` and that the
+  agent does not immediately repeat it with list/transcript calls.
 - Upload `tests/fixtures/keyframe-synthetic.mp4` as a public source video and
   attach `keyframe-synthetic.en.vtt` as its English captions. Keep the local
   fixture as the identical fallback.

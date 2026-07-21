@@ -17,6 +17,7 @@ from video_context_mcp.models import (
     FrameQuality,
     FrameRegion,
     FrameResult,
+    IngestEvidenceBundle,
     IngestMode,
     IngestResult,
     IngestTimings,
@@ -27,7 +28,9 @@ from video_context_mcp.models import (
     SearchPage,
     StrictModel,
     TranscriptPage,
+    TranscriptSegment,
     TranscriptView,
+    VisualCoverage,
 )
 from video_context_mcp.server import _client_roots, _root_uri_to_path, create_server
 
@@ -127,6 +130,35 @@ class RecordingTranscriptService(FakeService):
     def get_transcript(self, video_id: str, **kwargs: object) -> TranscriptPage:
         self.limits.append(int(kwargs["limit"]))
         return super().get_transcript(video_id, **kwargs)
+
+
+class BundledIngestService(FakeService):
+    def ingest(self, source: str, **kwargs: object) -> IngestResult:
+        result = super().ingest(source, **kwargs)
+        return result.model_copy(
+            update={
+                "evidence_bundle": IngestEvidenceBundle(
+                    scope_end_s=1,
+                    transcript=TranscriptPage(
+                        video_id="demo",
+                        segments=(
+                            TranscriptSegment(
+                                segment_id="demo:compact:0",
+                                start_s=0,
+                                end_s=1,
+                                text="short evidence",
+                            ),
+                        ),
+                        view=TranscriptView.COMPACT,
+                    ),
+                    moments=MomentPage(
+                        video_id="demo",
+                        moments=(),
+                        visual_coverage=VisualCoverage.PROBE,
+                    ),
+                )
+            }
+        )
 
 
 class RemoteUncoveredFrameService(FakeService):
@@ -263,30 +295,23 @@ def test_exact_tool_surface_and_annotations() -> None:
     ingest_output = tools["video_ingest"].output_schema["properties"]
     assert ingest_output["proxy_cached"]["default"] is False
     assert "targeted timestamp seeks" in ingest_output["proxy_cached"]["description"]
-    assert {"retrieval_guidance", "proxy_size_bytes", "proxy_expires_at"} <= ingest_output.keys()
-    assert "exactly one video_search" in ingest_output["retrieval_guidance"]["default"]
-    assert "instead of searching plugin caches" in server.instructions
-    assert "exact structured video_id byte-for-byte" in server.instructions
-    assert server.instructions.startswith("SINGLE-IMAGE SAFETY:")
-    assert "TOPIC DISCOVERY CONTRACT:" in server.instructions
-    assert "does not make Keyframe the subject" in server.instructions
-    assert "'build my own processor' means a CPU" in server.instructions
-    assert "Keyframe does not search the public web" in server.instructions
-    assert "direct watch URLs" in server.instructions
-    assert "duration retry may repeat the same source" in server.instructions
-    assert "ingest call for a second URL" in server.instructions
-    assert "central subject and instructional task strongly match" in server.instructions
-    assert "progress may state the requested retrieval goal" in server.instructions
-    assert "complete next agent message must be only" in server.instructions
-    assert "Otherwise, for an untimed physical-action request" in server.instructions
-    assert "never call video_get_frame until one video_search has completed" in server.instructions
-    for routing_term in (
-        "video_get_code",
-        "render_markdown",
-        "photo",
-        "screenshot",
-    ):
-        assert routing_term not in server.instructions.lower()
+    assert {
+        "retrieval_guidance",
+        "evidence_bundle",
+        "proxy_size_bytes",
+        "proxy_expires_at",
+    } <= ingest_output.keys()
+    evidence_bundle = ingest_output["evidence_bundle"]
+    assert evidence_bundle["default"] is None
+    assert evidence_bundle["anyOf"][0]["$ref"] == "#/$defs/IngestEvidenceBundle"
+    bundle_definition = tools["video_ingest"].output_schema["$defs"]["IngestEvidenceBundle"]
+    assert {"transcript", "transcript_omitted_reason", "moments"} <= set(
+        bundle_definition["properties"]
+    )
+    assert "Duration changes batching, never intent" in ingest_output["retrieval_guidance"][
+        "default"
+    ]
+    assert "up to 10 minutes" in evidence_bundle["description"]
     for name in ("video_search", "video_list_moments"):
         properties = tools[name].parameters["properties"]
         required = set(tools[name].parameters.get("required", ()))
@@ -298,40 +323,17 @@ def test_exact_tool_surface_and_annotations() -> None:
         assert "half-open temporal window" in properties["start_s"]["description"]
         assert "Inclusive start" in properties["start_s"]["description"]
         assert "Exclusive end" in properties["end_s"]["description"]
-    assert "channel='all', never 'both'" in tools["video_search"].description
-    assert "coherent nearby context" in tools["video_search"].description
-    assert "make this the only search" in tools["video_search"].description
-    assert "do not list moments" in tools["video_search"].description
-    assert "existing local Keyframe library" in tools["video_search"].description
-    assert "never public-web or YouTube discovery" in tools["video_search"].description
-    assert "does not discover public videos from a topic" in tools["video_ingest"].description
-    assert tools["video_search"].description.startswith("SINGLE-IMAGE RESPONSE CONTRACT:")
-    assert "NO-VISION SINGLE-IMAGE ACTION SELECTION:" in tools["video_search"].description
-    for name in ("video_ingest", "video_search", "video_get_frame"):
-        description = tools[name].description
-        assert description.startswith("SINGLE-IMAGE RESPONSE CONTRACT:")
-        assert "progress may state the requested retrieval goal" in description
-        assert "render_markdown byte-for-byte your entire final response" in description
-        assert "Add no prefix, suffix, bullet, timestamp/provenance line" in description
+    assert "local library, never the web" in tools["video_search"].description
+    assert "does not discover videos" in tools["video_ingest"].description
+    assert "action-phase heuristic" in tools["video_search"].description
     assert (
         "every untimed no-vision single-image physical-action share"
         in tools["video_search"].parameters["properties"]["channel"]["description"]
     )
-    assert (
-        "progress update may state the requested retrieval goal"
-        in tools["video_get_frame"].description
-    )
-    assert transcript_tool.description.startswith(
-        "NOT FOR AN UNTIMED NO-VISION PHYSICAL-ACTION IMAGE REQUEST"
-    )
-    assert "forbids transcript paging" in transcript_tool.description
-    assert tools["video_list_moments"].description.startswith(
-        "NOT FOR AN UNTIMED NO-VISION PHYSICAL-ACTION IMAGE REQUEST"
-    )
-    assert "forbids moment inventory" in tools["video_list_moments"].description
-    assert "photo" not in transcript_tool.description.lower()
-    assert "frame" not in transcript_tool.description.lower()
-    assert "photo" not in tools["video_list_moments"].description.lower()
+    assert "Skip this call when a short ingest bundle" in transcript_tool.description
+    assert "Skip this call when the short ingest bundle" in tools[
+        "video_list_moments"
+    ].description
     frame_tool = tools["video_get_frame"]
     frame_properties = frame_tool.parameters["properties"]
     frame_required = set(frame_tool.parameters["required"])
@@ -339,17 +341,11 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert {"moment_id", "t"}.isdisjoint(frame_required)
     assert frame_properties["quality"]["default"] == "auto"
     assert "copy render_markdown byte-for-byte" in frame_tool.description
-    assert "angle-bracket destination delimiters" in frame_tool.description
-    assert "exactly one action-aligned frame" in frame_tool.description
-    assert "pass the qualifying hit's start_s directly as t" in frame_tool.description
-    assert "never use a browser, shell" in frame_tool.description
-    assert "permission request" in frame_tool.description
+    assert "For a user-supplied selector, skip search" in frame_tool.description
+    assert "never open a browser, run shell" in frame_tool.description
+    assert "request permission" in frame_tool.description
     assert frame_tool.title == "Show or share a video photo, screenshot, still, or frame"
-    assert "SHOW OR SHARE VIDEO IMAGES." in frame_tool.description
-    assert "NO-VISION UNTIMED PHYSICAL-ACTION RULE" in frame_tool.description
-    assert "Markdown as the entire response and stop" in frame_tool.description
-    assert "add no accompanying text" in frame_tool.description
-    assert "add only timestamp and provenance" not in frame_tool.description
+    assert "render_markdown byte-for-byte as the entire reply" in frame_tool.description
     assert frame_tool.parameters["$defs"]["FrameQuality"]["enum"] == [
         "auto",
         "probe",
@@ -380,12 +376,9 @@ def test_exact_tool_surface_and_annotations() -> None:
     )
     code_output = tools["video_get_code"].output_schema["properties"]
     assert tools["video_get_code"].title == "Extract code or terminal text only"
-    assert tools["video_get_code"].description.startswith("CODE OR TERMINAL CONTENT ONLY.")
     assert "photo" not in tools["video_get_code"].description.lower()
     assert "screenshot" not in tools["video_get_code"].description.lower()
-    assert "frame" not in tools["video_get_code"].description.lower()
-    assert "attached source crop is already visual evidence" in tools["video_get_code"].description
-    assert "returned moment_id, requested_t, actual_t" in tools["video_get_code"].description
+    assert "crop is already visual evidence" in tools["video_get_code"].description
     assert {"render_path", "render_markdown", "render_expires_at"} <= code_output.keys()
     search_hit_schema = tools["video_search"].output_schema["$defs"]["SearchHit"]
     assert "context" in search_hit_schema["properties"]
@@ -414,14 +407,9 @@ def test_exact_frame_selector_skips_search_in_direct_server_guidance() -> None:
         "default"
     ]
 
-    for guidance in (
-        server_module._SINGLE_IMAGE_RESPONSE_CONTRACT,
-        tools["video_ingest"].description,
-        ingest_guidance,
-        tools["video_get_frame"].description,
-    ):
-        assert "exact timestamp or moment_id" in guidance
-        assert "preserve that selector and skip search" in guidance
+    assert "preserve an exact selector and skip search" in server.instructions
+    assert "preserve an exact selector" in ingest_guidance
+    assert "For a user-supplied selector, skip search" in tools["video_get_frame"].description
 
 
 def test_markdown_only_final_is_scoped_to_a_sole_image_deliverable() -> None:
@@ -431,12 +419,11 @@ def test_markdown_only_final_is_scoped_to_a_sole_image_deliverable() -> None:
         "description"
     ]
 
-    for guidance in (server_module._SINGLE_IMAGE_RESPONSE_CONTRACT, frame_markdown):
-        normalized = " ".join(guidance.lower().split())
-        assert "sole requested deliverable is one image" in normalized
-        assert "image input is omitted or unsupported" in normalized
-
-    assert "multi-evidence analysis" in server.instructions
+    normalized_server = " ".join(server.instructions.lower().split())
+    normalized_schema = " ".join(frame_markdown.lower().split())
+    assert "one image is the sole deliverable" in normalized_server
+    assert "sole requested deliverable is one image" in normalized_schema
+    assert "image input is omitted or unsupported" in normalized_schema
 
 
 def test_direct_frame_metadata_limits_vision_candidate_retrieval() -> None:
@@ -445,43 +432,29 @@ def test_direct_frame_metadata_limits_vision_candidate_retrieval() -> None:
         "video_get_frame"
     ].description
 
-    for guidance in (server.instructions, frame_description):
-        assert "image-capable model may inspect at most two distinct candidates" in guidance
-        assert "Never retrieve the same moment_id or timestamp twice" in guidance
+    assert "Never repeat the same visual selector" in server.instructions
+    assert "image-capable model may inspect at most two distinct candidates" in frame_description
+    assert "fetch the same selector twice" in frame_description
 
 
 def test_server_metadata_exposes_multi_evidence_call_budget() -> None:
     server = create_server(FakeService())
     tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
 
-    for guidance in (
-        server.instructions,
-        tools["video_ingest"].description,
-        tools["video_get_transcript"].description,
-        tools["video_search"].description,
-        tools["video_list_moments"].description,
-        tools["video_get_code"].description,
-        tools["video_get_frame"].description,
-    ):
-        assert "MULTI-EVIDENCE SYNTHESIS BUDGET" in guidance
-        assert "four searches, two transcript calls" in guidance
-        assert "four combined visual retrieval calls" in guidance
-        assert "Exact transcript calls must follow search" in guidance
-        assert "Direct transcript/export requests" in guidance
-        assert "BEFORE/AFTER VISUAL PAIRS (multi-evidence only)" in guidance
-        assert "two of the existing four visual calls" in guidance
-        assert "implementation crop cannot substitute" in guidance
-        assert "Make comparison calls sequentially" in guidance
-        assert "later image qualifies only when it visibly establishes" in guidance
-        assert "Do not spend a visual call on an issue, ticket, specification" in guidance
-        assert "same overlapping elements with their visible foreground" in guidance
-        assert "within the existing ceiling" in guidance
-        assert "never exhaust probe candidates" in guidance
+    assert "four searches" in server.instructions
+    assert "two bounded transcript calls" in server.instructions
+    assert "two visual calls" in server.instructions
+    assert "four for accuracy" in server.instructions
+    assert "Direct transcript/export requests" in server.instructions
+    assert "paginate exact cues for the requested scope" in server.instructions
+    assert "before/after claims" in server.instructions
+    assert "sequential distinct images" in server.instructions
 
-    frame_guidance = tools["video_get_frame"].description
-    assert "VISUAL DEDUPLICATION" in frame_guidance
-    assert "code crop and full frame of the same retained image" in frame_guidance
-    assert "returned moment_id, requested_t, actual_t" in frame_guidance
+    descriptions = [tool.description for tool in tools.values()]
+    assert len(server.instructions) < 2_500
+    assert sum(map(len, descriptions)) < 4_000
+    assert all("REQUEST FIDELITY" not in description for description in descriptions)
+    assert all("four searches" not in description for description in descriptions)
 
 
 @pytest.mark.asyncio
@@ -500,6 +473,20 @@ async def test_structured_ingest_result_reports_request_local_timings() -> None:
         "visual_ms": 7,
         "index_commit_ms": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_structured_ingest_returns_short_bundle_without_image_content() -> None:
+    server = create_server(BundledIngestService())
+    unstructured, structured = await server._tool_manager.call_tool(
+        "video_ingest", {"source": "/allowed/demo.mp4"}, convert_result=True
+    )
+
+    assert structured["evidence_bundle"]["transcript"]["view"] == "compact"
+    assert structured["evidence_bundle"]["transcript"]["segments"][0]["text"] == (
+        "short evidence"
+    )
+    assert all(block.type != "image" for block in unstructured)
 
 
 @pytest.mark.asyncio

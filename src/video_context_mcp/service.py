@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Literal
 
 from filelock import FileLock, Timeout
 from PIL import Image, UnidentifiedImageError
@@ -32,6 +33,7 @@ from video_context_mcp.acquisition import (
 from video_context_mcp.acquisition import (
     TranscriptSegment as AcquiredTranscriptSegment,
 )
+from video_context_mcp.captions import caption_token_overlap, is_rolling_caption_pair
 from video_context_mcp.config import Settings
 from video_context_mcp.constants import (
     DEFAULT_TRANSCRIPT_LIMIT,
@@ -45,6 +47,9 @@ from video_context_mcp.constants import (
     MAX_SEARCH_LIMIT,
     MAX_TRANSCRIPT_LIMIT,
     PIPELINE_VERSION,
+    SHORT_VIDEO_EVIDENCE_MAX_DURATION_S,
+    SHORT_VIDEO_EVIDENCE_MAX_MOMENTS,
+    SHORT_VIDEO_EVIDENCE_MAX_TRANSCRIPT_BYTES,
     VISUAL_PROBE_MAX_EDGE,
 )
 from video_context_mcp.cursors import cursor_scope, decode_cursor, encode_cursor
@@ -56,6 +61,7 @@ from video_context_mcp.models import (
     FrameQuality,
     FrameRegion,
     FrameResult,
+    IngestEvidenceBundle,
     IngestMode,
     IngestResult,
     IngestTimings,
@@ -747,21 +753,7 @@ class KeyframeService:
             offset=offset,
             limit=limit,
         )
-        summaries = tuple(
-            MomentSummary(
-                moment_id=moment.moment_id,
-                start_s=moment.start_s,
-                end_s=moment.end_s,
-                kind=moment.kind,
-                classification_confidence=moment.classification_confidence,
-                stable_seconds=moment.stable_seconds,
-                ocr_preview=_preview(moment.ocr_text),
-                ocr_confidence=moment.ocr_confidence,
-                language_guess=moment.language_guess,
-                parses=moment.parses,
-            )
-            for moment in moments
-        )
+        summaries = tuple(_moment_summary(moment) for moment in moments)
         next_cursor = (
             encode_cursor(
                 kind="moments",
@@ -1452,6 +1444,39 @@ class KeyframeService:
                     video.video_id,
                     exc_info=True,
                 )
+        evidence_bundle = None
+        if video.duration_s <= SHORT_VIDEO_EVIDENCE_MAX_DURATION_S:
+            transcript_page = self.get_transcript(
+                video.video_id,
+                start_s=0.0,
+                end_s=video.duration_s,
+                view=TranscriptView.COMPACT,
+                limit=MAX_TRANSCRIPT_LIMIT,
+            )
+            transcript_bytes = sum(
+                len(segment.text.encode("utf-8")) for segment in transcript_page.segments
+            )
+            bundle_transcript: TranscriptPage | None = transcript_page
+            transcript_omitted_reason: Literal["unavailable", "size_limit"] | None = None
+            if not video.has_transcript or not transcript_page.segments:
+                bundle_transcript = None
+                transcript_omitted_reason = "unavailable"
+            elif transcript_bytes > SHORT_VIDEO_EVIDENCE_MAX_TRANSCRIPT_BYTES:
+                bundle_transcript = None
+                transcript_omitted_reason = "size_limit"
+            moment_page = self.list_moments(
+                video.video_id,
+                kind=MomentKind.ANY,
+                start_s=0.0,
+                end_s=video.duration_s,
+                limit=SHORT_VIDEO_EVIDENCE_MAX_MOMENTS,
+            )
+            evidence_bundle = IngestEvidenceBundle(
+                scope_end_s=video.duration_s,
+                transcript=bundle_transcript,
+                transcript_omitted_reason=transcript_omitted_reason,
+                moments=moment_page,
+            )
         return IngestResult(
             video_id=video.video_id,
             title=video.title,
@@ -1465,6 +1490,7 @@ class KeyframeService:
             keyframe_count=video.keyframe_count,
             indexed_mode=video.indexed_mode,
             visual_coverage=video.visual_coverage,
+            evidence_bundle=evidence_bundle,
             status=video.status,
             warnings=video.warnings,
             cache_hit=cache_hit,
@@ -1652,7 +1678,6 @@ _AUTOMATIC_CAPTION_SOURCE = "automatic_captions"
 _CAPTION_TRANSCRIPT_SOURCES = frozenset(
     {"captions", _AUTOMATIC_CAPTION_SOURCE, "embedded", "sidecar"}
 )
-_CAPTION_TOKEN_EDGE_RE = re.compile(r"^[^\w]+|[^\w]+$")
 
 
 def _compact_transcript_segments(
@@ -1683,9 +1708,16 @@ def _compact_transcript_segments(
             previous_segment is not None
             and segment.source == _AUTOMATIC_CAPTION_SOURCE
             and previous_segment.source == _AUTOMATIC_CAPTION_SOURCE
-            and segment.start_s < previous_segment.end_s
+            and is_rolling_caption_pair(
+                previous_start_s=previous_segment.start_s,
+                previous_end_s=previous_segment.end_s,
+                previous_text=previous_segment.text,
+                current_start_s=segment.start_s,
+                current_end_s=segment.end_s,
+                current_text=segment.text,
+            )
         ):
-            overlap = _caption_token_overlap(previous_tokens, cue_tokens)
+            overlap = caption_token_overlap(previous_tokens, cue_tokens)
 
         contribution = cue_tokens[overlap:]
         if contribution:
@@ -1717,18 +1749,19 @@ def _compact_transcript_segments(
     return compact
 
 
-def _caption_token_overlap(previous: Sequence[str], current: Sequence[str]) -> int:
-    previous_normalized = [_normalize_caption_token(token) for token in previous]
-    current_normalized = [_normalize_caption_token(token) for token in current]
-    for length in range(min(len(previous), len(current)), 0, -1):
-        if previous_normalized[-length:] == current_normalized[:length]:
-            return length
-    return 0
-
-
-def _normalize_caption_token(token: str) -> str:
-    stripped = _CAPTION_TOKEN_EDGE_RE.sub("", token.casefold())
-    return stripped or token.casefold()
+def _moment_summary(moment: VisualMoment) -> MomentSummary:
+    return MomentSummary(
+        moment_id=moment.moment_id,
+        start_s=moment.start_s,
+        end_s=moment.end_s,
+        kind=moment.kind,
+        classification_confidence=moment.classification_confidence,
+        stable_seconds=moment.stable_seconds,
+        ocr_preview=_preview(moment.ocr_text),
+        ocr_confidence=moment.ocr_confidence,
+        language_guess=moment.language_guess,
+        parses=moment.parses,
+    )
 
 
 def _preview(text: str, *, length: int = 240) -> str:
