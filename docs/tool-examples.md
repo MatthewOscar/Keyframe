@@ -176,9 +176,11 @@ to full or performing any other refresh/re-ingestion.
 }
 ```
 
-Provide exactly one of `moment_id` or `t`, never both. Prefer the unchanged
-generation-scoped `moment_id` from bounded shown search or moment listing. Use a
-timestamp only when no moment ID is available:
+Provide exactly one of `moment_id` or `t`, never both. Use the unchanged
+generation-scoped `moment_id` from bounded shown search or moment listing for
+on-screen evidence. For a demonstrated physical action, use a bounded `said`
+search, skip `action_phase="announcement"`, prefer the first `completed` hit
+with `in_progress` as fallback, and pass that hit's `start_s` as `t`:
 
 ```json
 {

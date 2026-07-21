@@ -3,7 +3,7 @@
 This is an internal factual worksheet, not submission copy. Matthew must write
 the final Devpost text himself and must not paste AI-generated prose from this
 file. Use it only to verify facts, links, limits, and missing placeholders after
-the final v0.2.3 release and demo are public.
+the final v0.2.4 release and demo are public.
 
 ## Submission fields
 
@@ -146,7 +146,7 @@ similar visual steps.
 - **Preview:** Windows x64, with unit, import, Whisper-dependency, and package
   smoke coverage.
 
-Intel macOS is not a supported Whisper/plugin target in v0.2.3. Keyframe uses
+Intel macOS is not a supported Whisper/plugin target in v0.2.4. Keyframe uses
 local STDIO MCP and therefore targets desktop and local coding-agent sessions,
 not ChatGPT web.
 
@@ -156,7 +156,7 @@ Install FFmpeg/ffprobe, Tesseract 5, Node.js 22+, and `uv`. Then install the
 release plugin:
 
 ```bash
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.3
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.4
 codex plugin add keyframe@keyframe-tools
 ```
 
@@ -164,7 +164,7 @@ Clone the release only to obtain its first-party fixture, then launch Codex;
 the MCP server runs from the published wheel and is not rebuilt from source:
 
 ```bash
-git clone --branch v0.2.3 --depth 1 \
+git clone --branch v0.2.4 --depth 1 \
   https://github.com/MatthewOscar/Keyframe.git
 cd Keyframe
 codex --model gpt-5.6

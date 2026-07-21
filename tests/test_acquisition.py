@@ -747,9 +747,11 @@ def test_downloaded_media_probe_keeps_duration_drift_tolerance_then_guides_retry
     assert "Do not split or restage the source" in str(raised.value)
 
 
-def test_auto_transcript_falls_back_when_manual_caption_download_fails(
+@pytest.mark.parametrize("transcript_mode", ["auto", "captions"])
+def test_caption_modes_fall_back_when_manual_caption_download_fails(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
+    transcript_mode: acquisition.TranscriptMode,
 ) -> None:
     manual_url = f"https://{PUBLIC_IP}/manual.vtt"
     automatic_url = f"https://{PUBLIC_IP}/automatic.vtt"
@@ -771,12 +773,48 @@ def test_auto_transcript_falls_back_when_manual_caption_download_fails(
 
     monkeypatch.setattr(acquisition, "_open_validated_subtitle", open_caption)
 
-    acquired = acquire_remote(f"https://{PUBLIC_IP}/video", settings)
+    acquired = acquire_remote(
+        f"https://{PUBLIC_IP}/video",
+        settings,
+        transcript_mode=transcript_mode,
+    )
 
     assert acquired.transcript[0].text == "Automatic caption"
     assert acquired.transcript[0].origin == "automatic_captions"
     assert any("Manual captions could not be read" in warning for warning in acquired.warnings)
     assert calls[1][0]["format"] == ("bestvideo[height<=360]/best[height<=360]/worstvideo/worst")
+    acquired.cleanup()
+
+
+def test_explicit_caption_mode_uses_automatic_captions_when_manual_are_absent(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    automatic_url = f"https://{PUBLIC_IP}/automatic.vtt"
+    _install_fake_ydl(
+        monkeypatch,
+        _remote_info(
+            automatic_captions={"en": [{"ext": "vtt", "url": automatic_url}]},
+        ),
+    )
+    monkeypatch.setattr(
+        acquisition,
+        "_open_validated_subtitle",
+        lambda *_args, **_kwargs: _FakeResponse(
+            automatic_url,
+            b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nAutomatic caption\n",
+        ),
+    )
+
+    acquired = acquire_remote(
+        f"https://{PUBLIC_IP}/video",
+        settings,
+        transcript_mode="captions",
+    )
+
+    assert acquired.transcript[0].text == "Automatic caption"
+    assert acquired.transcript[0].origin == "automatic_captions"
+    assert not any("No readable captions" in warning for warning in acquired.warnings)
     acquired.cleanup()
 
 

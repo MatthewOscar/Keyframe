@@ -1,12 +1,39 @@
 ---
 name: keyframe-video-rag
-description: Open this skill only through the exact host-provided locator; never guess or collapse repeated path components. Retrieve timestamped transcript, on-screen text, code, and source frames from local videos, animated GIFs, or public video URLs with Keyframe MCP. Use for tutorials, screen recordings, animations, demos, lectures, or walkthroughs; finding what was said or shown; recovering code; or implementing a demonstrated change with timestamp citations.
+description: Analyze videos and animated GIFs with Keyframe MCP by retrieving timestamped transcript, on-screen text, code, and multi-step visual evidence. Use for tutorials, screen recordings, animations, demos, lectures, or walkthroughs; explaining what was said or shown; recovering code; or implementing a demonstrated change with timestamp citations. A narrow request only to render one source artifact is handled directly by the Keyframe MCP tool contracts; do not open this skill, promise visual quality, or infer visual details for that request. Otherwise open this skill only through the exact host-provided locator; for a Codex plugin cache preserve the full marketplace/keyframe/version/skills/keyframe-video-rag/SKILL.md suffix and never guess or collapse components.
 ---
 
 # Use Keyframe Video RAG
 
 This is the workflow skill the host located. After loading it, do not search for another copy
 or inspect plugin caches for additional Keyframe instructions.
+
+## Show or share one frame: overriding fast path
+
+This section overrides the generic moment-routing and transcript guidance below whenever the user
+asks to show, share, or extract one photo, screenshot, still, or frame.
+
+1. Do not use a browser, shell, terminal, web download, playback, screenshot, extra-copy, or
+   permission action at any phase. Keyframe publishes the host-renderable image itself. Without
+   image input, never repeat or echo visual-quality adjectives from the user—including “clear,”
+   “clean,” “best,” or “representative”—in an intent, progress update, or final response.
+2. If the conversation has no exact successful ingest receipt, call `video_ingest` once with
+   `mode="fast"`, then copy its `video_id` and exact descriptive chapter bounds byte-for-byte.
+3. For a no-vision model, make one `channel="said"` search inside those unpadded chapter bounds
+   using the requested object and physical-action terms. Skip `action_phase="announcement"`,
+   choose the first `action_phase="completed"` hit, or fall back to the first `in_progress` hit;
+   reject a title or transition such as “next,”
+   “now,” or “time to.” Do not call `video_list_moments`, `video_get_transcript`, or
+   `video_get_code`, and do not run a second search.
+4. Call `video_get_frame` exactly once at that timestamp with `region="full"` and
+   `quality="auto"`. Paste its `render_markdown` byte-for-byte and stop. Do not judge image
+   quality or infer visual facts; include only timestamp, provenance, and meaningful text labeled
+   `Tesseract OCR:` when available. If OCR is low-confidence or meaningless, omit the OCR line
+   entirely and do not mention the omission. Do not label the timestamp as a section start or end
+   unless it actually equals the returned chapter boundary.
+5. A vision-capable model may inspect at most two distinct `video_get_frame` candidates and
+   describe only what it actually sees. It still pastes the selected result's exact
+   `render_markdown` and uses no browser, shell, download, screenshot, copy, or permission flow.
 
 ## Confirm Keyframe actually ran
 
@@ -31,7 +58,7 @@ or inspect plugin caches for additional Keyframe instructions.
 1. Call `video_ingest` with `mode="fast"` first. A fresh fast-only index returns
    a sparse visual probe; a cache hit may return existing full coverage. Branch
    on the returned `visual_coverage`, `has_transcript`, and `has_audio`, not the
-   request alone.
+   request alone. For a show/share request, immediately return to the overriding fast path above.
 2. Prefer `transcript_mode="auto"`. It uses captions first and local Whisper
    only for audio-bearing media when installed. The bundled plugin includes the
    Whisper dependency; standalone base-package installs may not. Respect
@@ -74,7 +101,8 @@ or inspect plugin caches for additional Keyframe instructions.
 
 ## Decide visual depth
 
-1. After fast ingestion, call `video_list_moments` with `kind="any"` and
+1. Except for the overriding show/share fast path above, after fast ingestion call
+   `video_list_moments` with `kind="any"` and
    `limit=12` once for that index generation. Inspect the returned-coverage
    summaries as a routing check; do not automatically load every source image.
 2. For a spoken-only summary, quotation, or topic outline, stop on transcript

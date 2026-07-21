@@ -221,6 +221,14 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     contents = [path.read_text(encoding="utf-8") for path in paths]
     assert contents[0] == contents[1] == contents[2]
     assert "Use for tutorials, screen recordings" in contents[0]
+    assert "Analyze videos and animated GIFs with Keyframe MCP" in contents[0]
+    assert "narrow request only to render one source artifact" in contents[0]
+    assert "do not open this skill, promise visual quality" in contents[0]
+    assert "Show or share one frame: overriding fast path" in contents[0]
+    assert "Do not call `video_list_moments`, `video_get_transcript`, or" in contents[0]
+    assert "Call `video_get_frame` exactly once" in contents[0]
+    assert "never repeat or echo visual-quality adjectives" in contents[0]
+    assert "omit the OCR line" in contents[0]
     assert "Use when Codex must understand" not in contents[0]
     assert "For each source, make at most one successful fast ingest" in contents[0]
     assert "Do not split, restage, or reconstruct the source" in contents[0]
@@ -258,7 +266,8 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "without image input cannot evaluate candidates" in contents[0]
     assert "must not call the frame clear, clean, best, representative" in contents[0]
     assert "Omit OCR when it is low-confidence or not meaningful" in contents[0]
-    assert "Open this skill only through the exact host-provided locator" in contents[0]
+    assert "open this skill only through the exact host-provided locator" in contents[0]
+    assert "marketplace/keyframe/version/skills/keyframe-video-rag/SKILL.md" in contents[0]
     assert "do not search for another copy" in contents[0]
     assert "Copy the returned structured `video_id` byte-for-byte" in contents[0]
     assert "never wait for a" in contents[0]
@@ -271,26 +280,17 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     server_source = (ROOT / "src/video_context_mcp/server.py").read_text(encoding="utf-8")
     assert "Ingest each source with mode='fast' once" in server_source
     assert "one mode='full' upgrade per source" in server_source
-    assert "do not split or restage it" in server_source
-    assert "copy it byte-for-byte" in server_source
+    assert "do not split or restage the source" in server_source
+    assert "exact structured video_id byte-for-byte" in server_source
     assert "instead of searching plugin caches" in server_source
-    assert "Exact identity follow-ups" in server_source
-    assert "Never select a higher-ranked OCR hit from another interval" in server_source
     assert "view='compact'" in server_source
-    assert "quality='auto' before upgrading" in server_source
     assert "copy render_markdown byte-for-byte" in server_source
-    assert "video_get_frame is the only visual retrieval tool" in server_source
-    assert "SHOW/SHARE FRAME FAST PATH" in server_source
-    assert "do not test the URL in downstream tools" in server_source
+    assert "SHOW OR SHARE VIDEO IMAGES" in server_source
+    assert "CODE OR TERMINAL CONTENT ONLY" in server_source
     assert "channel='all', never 'both'" in server_source
     assert "coherent nearby context" in server_source
-    assert "one said search inside the exact unpadded" in server_source
-    assert "Never list moments, run another" in server_source
-    assert "omit low-confidence or meaningless OCR" in server_source
-    assert "never judge frame quality" in server_source
-    assert "including in progress updates before the frame call" in server_source
-    assert "do not echo those adjectives from the user" in server_source
-    assert "never infer objects, layout, condition, or framing" in server_source
+    assert "including in progress updates before this call" in server_source
+    assert "never infer objects or layout from OCR" in server_source
 
 
 def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
@@ -308,7 +308,8 @@ def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
         "render_markdown byte-for-byte",
         "angle-bracket destination delimiters",
         "sole MCP image block bytes",
-        "no browser, shell, terminal, web-download",
+        "no browser, shell/terminal media command, web-download",
+        "at most one host-required read-only SKILL.md load",
         "Never requests quality=source",
         "Tesseract OCR",
         "visual-quality claim",

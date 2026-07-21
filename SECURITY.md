@@ -21,7 +21,7 @@ paths. Its intended boundaries are:
   private staging directory under the OS temp location for selected uploads;
 - remote URLs are validated and private-network destinations are blocked by
   default;
-- acquisition runs without browser cookies or account credentials in v0.1.x;
+- acquisition runs without browser cookies or account credentials;
 - downloads are temporary and completed indexes are published atomically; and
 - the server binds only to STDIO by default. Any development HTTP transport
   must remain on loopback and is not a production authentication boundary.
@@ -56,4 +56,4 @@ on the inherited ACL of the current user's temp directory. Use
 ## Supported versions
 
 Until a stable release exists, security fixes are applied only to the newest
-`0.1.x` release and the current default branch.
+release and the current default branch.

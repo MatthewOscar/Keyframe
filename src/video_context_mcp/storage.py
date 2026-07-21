@@ -14,6 +14,7 @@ from video_context_mcp.models import (
     MomentKind,
     SearchChannel,
     SearchHit,
+    SpeechActionPhase,
     TranscriptMode,
     TranscriptSegment,
     VideoRecord,
@@ -646,6 +647,11 @@ class KeyframeStore:
                     channel=row_channel,
                     snippet=row["snippet"],
                     context=speech_contexts.get(row["id"]),
+                    action_phase=(
+                        _speech_action_phase(str(row["text"]))
+                        if row_channel is SearchChannel.SAID
+                        else SpeechActionPhase.UNKNOWN
+                    ),
                     score=round(-float(row["rank"]), 8),
                     segment_id=row["ref_id"] if row_channel is SearchChannel.SAID else None,
                     moment_id=row["ref_id"] if row_channel is SearchChannel.SHOWN else None,
@@ -670,6 +676,16 @@ class KeyframeStore:
                 (video_id,),
             ).fetchall()
         return [self._segment_from_row(row) for row in rows]
+
+    def transcript_sources(self, video_id: str) -> frozenset[str]:
+        """Return the distinct persisted transcript origins without loading segment text."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT source FROM transcript_segments WHERE video_id = ?",
+                (video_id,),
+            ).fetchall()
+        return frozenset(str(row["source"]) for row in rows)
 
     def moments_for_video(self, video_id: str) -> list[VisualMoment]:
         """Return all moments for ingestion refresh and artifact bookkeeping."""
@@ -875,6 +891,41 @@ def _speech_context(
     if len(context) <= _SEARCH_SPEECH_CONTEXT_CHARS:
         return context
     return f"{context[: _SEARCH_SPEECH_CONTEXT_CHARS - 1].rstrip()}…"
+
+
+def _speech_action_phase(cue_text: str | None) -> SpeechActionPhase:
+    """Classify the matched speech cue without claiming visual understanding.
+
+    ``SearchHit.start_s`` identifies the FTS row that matched the query, so its
+    phase must come from that same row.  The larger de-overlapped context is
+    useful evidence for a reader, but may cross an action boundary and contain
+    announcements or completions from adjacent cues.
+    """
+
+    if not cue_text:
+        return SpeechActionPhase.UNKNOWN
+    normalized = " ".join(cue_text.casefold().split())
+    announcement_patterns = (
+        r"\b(?:it'?s|it is|now(?:'s| is)) time to\b",
+        r"\b(?:we(?:'re| are) going to|we will|we'll|let'?s)\b",
+        r"\b(?:next up|next step|start by|begin by)\b",
+    )
+    if any(re.search(pattern, normalized) for pattern in announcement_patterns):
+        return SpeechActionPhase.ANNOUNCEMENT
+    completed_patterns = (
+        r"\bshould now be\b",
+        r"\b(?:all set|fully seated|down completely|finished installing|done installing)\b",
+    )
+    if any(re.search(pattern, normalized) for pattern in completed_patterns):
+        return SpeechActionPhase.COMPLETED
+    in_progress_patterns = (
+        r"\b(?:as|while) (?:you|we)(?:'re| are)\b",
+        r"\b(?:installing|mounting|putting|tightening|screwing|connecting|removing|adding|feeding)\b",
+        r"\b(?:go ahead and|keep going|continue to)\b",
+    )
+    if any(re.search(pattern, normalized) for pattern in in_progress_patterns):
+        return SpeechActionPhase.IN_PROGRESS
+    return SpeechActionPhase.UNKNOWN
 
 
 def _caption_token_overlap(previous: Sequence[str], current: Sequence[str]) -> int:

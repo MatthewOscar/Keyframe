@@ -12,6 +12,7 @@ from video_context_mcp.models import (
     IngestMode,
     MomentKind,
     SearchChannel,
+    SpeechActionPhase,
     TranscriptSegment,
     VideoRecord,
     VisualCoverage,
@@ -84,6 +85,7 @@ def test_round_trip_and_unified_search(store: KeyframeStore) -> None:
     assert video is not None and video.title == "Exception tutorial"
     assert video.visual_coverage is VisualCoverage.FULL
     assert store.find_by_fingerprint(video.source_fingerprint) == video
+    assert store.transcript_sources(video.video_id) == frozenset({"captions"})
 
     said, said_more = store.search(
         "multiple exception",
@@ -204,6 +206,10 @@ def test_said_search_adds_deoverlapped_rolling_caption_context(
     assert {hit.context for hit in hits} == {
         "with that done it's time to screw the board down now each case differs"
     }
+    assert {hit.start_s: hit.action_phase for hit in hits} == {
+        11: SpeechActionPhase.ANNOUNCEMENT,
+        12.5: SpeechActionPhase.UNKNOWN,
+    }
 
 
 def test_said_search_context_deoverlaps_boundary_bridged_youtube_cues(
@@ -262,9 +268,95 @@ def test_said_search_context_deoverlaps_boundary_bridged_youtube_cues(
     assert hits
     for hit in hits:
         assert hit.context is not None
+        assert hit.action_phase is SpeechActionPhase.IN_PROGRESS
         assert hit.context.count("leaving a little slack") == 1
         assert hit.context.count("motherboard as you are putting it in") == 1
         assert hit.context.count("add the rest of the screws") == 1
+
+
+def test_said_search_labels_completed_action_context(store: KeyframeStore) -> None:
+    segment = TranscriptSegment(
+        segment_id="file_deadbeef:s:25",
+        start_s=4,
+        end_s=6,
+        text="the motherboard should now be perfectly aligned and tightened down completely",
+        source="captions",
+    )
+    store.save_video(sample_video(), [segment], [sample_moment()])
+
+    hits, _has_more = store.search(
+        "motherboard aligned",
+        video_id=sample_video().video_id,
+        channel=SearchChannel.SAID,
+        offset=0,
+        limit=10,
+    )
+
+    assert hits[0].action_phase is SpeechActionPhase.COMPLETED
+
+
+@pytest.mark.parametrize(
+    ("matched_text", "query", "expected_phase"),
+    [
+        (
+            "the motherboard should now be aligned and down completely",
+            "aligned",
+            SpeechActionPhase.COMPLETED,
+        ),
+        (
+            "while we're mounting the motherboard onto the standoffs",
+            "standoffs",
+            SpeechActionPhase.IN_PROGRESS,
+        ),
+    ],
+)
+def test_said_search_phase_comes_from_matched_cue_not_mixed_neighbor_context(
+    store: KeyframeStore,
+    matched_text: str,
+    query: str,
+    expected_phase: SpeechActionPhase,
+) -> None:
+    segments = [
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:40",
+            start_s=10,
+            end_s=12,
+            text="next up we're going to install the motherboard",
+            source="captions",
+        ),
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:41",
+            start_s=14,
+            end_s=16,
+            text=matched_text,
+            source="captions",
+        ),
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:42",
+            start_s=17,
+            end_s=19,
+            text="the installation is all set and finished installing",
+            source="captions",
+        ),
+    ]
+    video = sample_video().model_copy(update={"duration_s": 20})
+    store.save_video(video, segments, [sample_moment()])
+
+    hits, _has_more = store.search(
+        query,
+        video_id=video.video_id,
+        channel=SearchChannel.SAID,
+        offset=0,
+        limit=10,
+    )
+
+    assert len(hits) == 1
+    assert hits[0].start_s == 14
+    assert hits[0].segment_id == "file_deadbeef:s:41"
+    assert hits[0].context is not None
+    assert "going to install" in hits[0].context
+    assert "finished installing" in hits[0].context
+    assert hits[0].action_phase is expected_phase
 
 
 def test_said_search_context_stays_inside_caller_time_bounds(

@@ -19,7 +19,7 @@ def test_non_loopback_hosts(host: str) -> None:
 
 def test_version_command(capsys: pytest.CaptureFixture[str]) -> None:
     main(["version"])
-    assert capsys.readouterr().out.strip() == "0.2.3"
+    assert capsys.readouterr().out.strip() == "0.2.4"
 
 
 def test_cache_prune_command_reports_results(

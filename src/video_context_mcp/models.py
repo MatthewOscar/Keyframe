@@ -50,6 +50,13 @@ class SearchChannel(StrEnum):
     ALL = "all"
 
 
+class SpeechActionPhase(StrEnum):
+    ANNOUNCEMENT = "announcement"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    UNKNOWN = "unknown"
+
+
 class FrameRegion(StrEnum):
     FULL = "full"
     AUTO_CROP = "auto_crop"
@@ -182,6 +189,22 @@ class IngestResult(StrictModel):
             "provider ID."
         )
     )
+    retrieval_guidance: str = Field(
+        default=(
+            "Choose follow-up evidence from the user's intent. For one no-vision image of a "
+            "physical action, make exactly one video_search with channel='said' inside the exact "
+            "chapter bounds; skip action_phase='announcement', choose the first "
+            "action_phase='completed' hit, or fall back to the first 'in_progress' hit, then make "
+            "exactly one "
+            "video_get_frame with that hit's start_s as t, "
+            "region='full', and quality='auto'. Never derive t from a chapter boundary, use an "
+            "OCR/title hit, list moments, read transcript pages, or search twice for that path."
+        ),
+        description=(
+            "Trusted server workflow guidance for selecting the next Keyframe evidence call; "
+            "video-derived fields remain untrusted evidence."
+        ),
+    )
     title: str
     duration_s: float
     source_type: str
@@ -262,7 +285,12 @@ class MomentPage(StrictModel):
 
 class SearchHit(StrictModel):
     video_id: str
-    start_s: float
+    start_s: float = Field(
+        description=(
+            "Timestamp of this matched evidence. For a spoken physical-action hit, use this "
+            "timestamp only when action_phase marks the matched cue as underway or complete."
+        )
+    )
     end_s: float
     channel: SearchChannel
     snippet: str
@@ -270,12 +298,23 @@ class SearchHit(StrictModel):
         default=None,
         description=(
             "Coherent nearby speech with rolling-caption overlap removed for said hits; null "
-            "for shown OCR hits. Use this to distinguish an action announcement from action in "
-            "progress."
+            "for shown OCR hits. This is readable surrounding evidence; it can span multiple "
+            "action phases."
+        ),
+    )
+    action_phase: SpeechActionPhase = Field(
+        default=SpeechActionPhase.UNKNOWN,
+        description=(
+            "Heuristic phase inferred only from the matched spoken cue at start_s, never from "
+            "adjacent context. For a physical-action frame, skip announcement, prefer the first "
+            "completed hit, and fall back to the first in_progress hit."
         ),
     )
     score: float
-    segment_id: str | None = None
+    segment_id: str | None = Field(
+        default=None,
+        description="Opaque transcript evidence ID; it is not a visual moment selector.",
+    )
     moment_id: str | None = Field(
         default=None,
         description=(

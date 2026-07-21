@@ -1613,7 +1613,9 @@ def acquire_remote(
 
     The first yt-dlp pass is metadata-only. Fast mode then downloads a low-resolution
     probe stream; full mode downloads the normal extraction stream. Both happen only
-    after restrictions and the duration cap have passed.
+    after restrictions and the duration cap have passed. Both ``auto`` and ``captions``
+    prefer manual captions and fall back to automatic captions; only ``auto`` may later
+    fall back to Whisper in the service layer.
     """
 
     _validate_modes(mode, transcript_mode)
@@ -1643,12 +1645,10 @@ def acquire_remote(
                     origin="captions",
                 )
             except SourceError as exc:
-                if transcript_mode == "captions":
-                    raise
                 warnings.append(
                     f"Manual captions could not be read; trying automatic captions: {exc}"
                 )
-        if not transcript and transcript_mode == "auto":
+        if not transcript:
             automatic = _preferred_subtitle(info.get("automatic_captions"))
             if automatic is not None:
                 language, track = automatic

@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.2.3",
+  "suite": "keyframe-mac-plugin-v0.2.4",
   "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, reliable inline frame rendering, honest no-vision behavior, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
@@ -80,7 +80,7 @@
         "Because Spark has no image input, finishes timestamp selection first, calls video_get_frame exactly once, and never retrieves a frame merely to test whether it looks right",
         "Pastes the selected structured render_markdown byte-for-byte, including its angle-bracket destination delimiters, so the image renders inline from render_path",
         "The render_path bytes equal the sole MCP image block bytes",
-        "Makes no browser, shell, terminal, web-download, playback, screenshot, extra-copy, or permission-request action",
+        "Apart from at most one host-required read-only SKILL.md load, makes no browser, shell/terminal media command, web-download, playback, screenshot, extra-copy, or permission-request action",
         "Never requests quality=source for the remote video",
         "Makes no unsupported component, placement, layout, condition, framing, or visual-quality claim; any meaningful extracted text is explicitly labeled Tesseract OCR and low-confidence or meaningless OCR is omitted"
       ]
@@ -91,7 +91,7 @@
       "prompt": "Using Keyframe and the already indexed {{MOTHERBOARD_VIDEO}}, can you share a clear photo from the video of the demonstrated motherboard installation?",
       "success_criteria": [
         "Uses exactly one cache-hit video_ingest to obtain the authoritative video_id and follows the image-capable at-most-two-distinct-frame policy",
-        "Pastes the selected render_markdown byte-for-byte, including its angle-bracket destination delimiters, without browser, shell, download, screenshot, or permission actions",
+        "Pastes the selected render_markdown byte-for-byte, including its angle-bracket destination delimiters; apart from at most one host-required read-only SKILL.md load, uses no browser, shell/terminal media command, download, screenshot, or permission action",
         "The image renders inline and matches the exact sole MCP image block bytes",
         "For this fixture, actual_t is between 4719 and 4741 seconds and the displayed frame visibly shows the motherboard installed or being installed in the case",
         "Any accompanying visual description is based on image inspection and matches the displayed frame",

@@ -233,7 +233,8 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                     assert code.structuredContent["moment_id"] == code_moment_id
                     assert code.structuredContent["visual_coverage"] == "full"
                     assert "slugify" in str(code.structuredContent["code"]).lower()
-                    assert [block.type for block in code.content] == ["text", "image"]
+                    assert [block.type for block in code.content] == ["text", "image", "text"]
+                    assert code.content[2].text == code.structuredContent["render_markdown"]
                     code_image = next(
                         block for block in code.content if isinstance(block, types.ImageContent)
                     )
@@ -249,7 +250,8 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                     assert frame.structuredContent["requested_t"] == 5.0
                     assert frame.structuredContent["requested_moment_id"] is None
                     assert frame.structuredContent["requested_t_covered"] is True
-                    assert [block.type for block in frame.content] == ["text", "image"]
+                    assert [block.type for block in frame.content] == ["text", "image", "text"]
+                    assert frame.content[2].text == frame.structuredContent["render_markdown"]
                     frame_image = next(
                         block for block in frame.content if isinstance(block, types.ImageContent)
                     )

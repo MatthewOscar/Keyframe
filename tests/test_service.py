@@ -846,6 +846,73 @@ def test_cache_identity_includes_requested_transcript_mode(tmp_path: Path) -> No
     assert len(calls) == 2
 
 
+def test_auto_caption_cache_satisfies_explicit_caption_request(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    base_acquire, calls = _fake_acquirer()
+
+    def acquire(source_value: str, settings_value: Settings, **kwargs: object) -> AcquiredSource:
+        acquired = base_acquire(source_value, settings_value, **kwargs)
+        if kwargs.get("transcript_mode") == "auto":
+            acquired.transcript = tuple(
+                AcquiredTranscriptSegment(
+                    segment.start_s,
+                    segment.end_s,
+                    segment.text,
+                    origin="automatic_captions",
+                )
+                for segment in acquired.transcript
+            )
+        return acquired
+
+    service = _service(settings, acquire)
+
+    automatic = service.ingest(
+        str(source), mode=IngestMode.FAST, transcript_mode=TranscriptMode.AUTO
+    )
+    explicit_captions = service.ingest(
+        str(source), mode=IngestMode.FAST, transcript_mode=TranscriptMode.CAPTIONS
+    )
+
+    assert automatic.has_transcript is True
+    assert explicit_captions.cache_hit is True
+    assert explicit_captions.video_id == automatic.video_id
+    assert service.store.transcript_sources(automatic.video_id) == frozenset(
+        {"automatic_captions"}
+    )
+    assert len(calls) == 1
+
+
+def test_auto_whisper_cache_does_not_satisfy_caption_request(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    base_acquire, calls = _fake_acquirer()
+
+    def acquire(source_value: str, settings_value: Settings, **kwargs: object) -> AcquiredSource:
+        acquired = base_acquire(source_value, settings_value, **kwargs)
+        origin = "whisper" if kwargs.get("transcript_mode") == "auto" else "captions"
+        acquired.transcript = tuple(
+            AcquiredTranscriptSegment(
+                segment.start_s,
+                segment.end_s,
+                segment.text,
+                origin=origin,
+            )
+            for segment in acquired.transcript
+        )
+        return acquired
+
+    service = _service(settings, acquire)
+    service.ingest(str(source), mode=IngestMode.FAST, transcript_mode=TranscriptMode.AUTO)
+    explicit_captions = service.ingest(
+        str(source), mode=IngestMode.FAST, transcript_mode=TranscriptMode.CAPTIONS
+    )
+
+    assert explicit_captions.cache_hit is False
+    assert explicit_captions.transcript_mode is TranscriptMode.CAPTIONS
+    assert len(calls) == 2
+
+
 def test_page_cursors_are_bound_to_the_exact_query_scope(tmp_path: Path) -> None:
     settings, source_root = _settings(tmp_path)
     source = _source_file(source_root)
@@ -1270,8 +1337,9 @@ def test_get_code_requires_exactly_one_selector_and_rejects_non_code_moments(
         service.get_code(ingested.video_id)
     with pytest.raises(SourceError, match="exactly one"):
         service.get_code(ingested.video_id, moment_id=moments[0].moment_id, t=2.0)
-    with pytest.raises(CacheError, match="not code or terminal"):
+    with pytest.raises(CacheError, match="Do not retry video_get_code") as rejected:
         service.get_code(ingested.video_id, moment_id=moments[1].moment_id)
+    assert "Call video_get_frame once with the same moment_id" in str(rejected.value)
 
     selected = service.get_code(ingested.video_id, moment_id=moments[0].moment_id)
     assert selected.result.requested_t is None

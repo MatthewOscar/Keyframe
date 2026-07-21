@@ -263,9 +263,18 @@ def test_exact_tool_surface_and_annotations() -> None:
     ingest_output = tools["video_ingest"].output_schema["properties"]
     assert ingest_output["proxy_cached"]["default"] is False
     assert "targeted timestamp seeks" in ingest_output["proxy_cached"]["description"]
-    assert {"proxy_size_bytes", "proxy_expires_at"} <= ingest_output.keys()
+    assert {"retrieval_guidance", "proxy_size_bytes", "proxy_expires_at"} <= ingest_output.keys()
+    assert "exactly one video_search" in ingest_output["retrieval_guidance"]["default"]
     assert "instead of searching plugin caches" in server.instructions
     assert "exact structured video_id byte-for-byte" in server.instructions
+    for routing_term in (
+        "video_get_frame",
+        "video_get_code",
+        "render_markdown",
+        "photo",
+        "screenshot",
+    ):
+        assert routing_term not in server.instructions.lower()
     for name in ("video_search", "video_list_moments"):
         properties = tools[name].parameters["properties"]
         required = set(tools[name].parameters.get("required", ()))
@@ -281,7 +290,17 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert "coherent nearby context" in tools["video_search"].description
     assert "make this the only search" in tools["video_search"].description
     assert "do not list moments" in tools["video_search"].description
+    assert tools["video_search"].description.startswith(
+        "NO-VISION SINGLE-IMAGE ACTION SELECTION:"
+    )
+    assert (
+        "every no-vision single-image share"
+        in tools["video_search"].parameters["properties"]["channel"]["description"]
+    )
     assert "including in progress updates before this call" in tools["video_get_frame"].description
+    assert "photo" not in transcript_tool.description.lower()
+    assert "frame" not in transcript_tool.description.lower()
+    assert "photo" not in tools["video_list_moments"].description.lower()
     frame_tool = tools["video_get_frame"]
     frame_properties = frame_tool.parameters["properties"]
     frame_required = set(frame_tool.parameters["required"])
@@ -291,8 +310,12 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert "copy render_markdown byte-for-byte" in frame_tool.description
     assert "angle-bracket destination delimiters" in frame_tool.description
     assert "exactly one action-aligned frame" in frame_tool.description
+    assert "pass the qualifying hit's start_s directly as t" in frame_tool.description
     assert "never use a browser, shell" in frame_tool.description
     assert "permission request" in frame_tool.description
+    assert frame_tool.title == "Show or share a video photo, screenshot, still, or frame"
+    assert frame_tool.description.startswith("SHOW OR SHARE VIDEO IMAGES.")
+    assert "NO-VISION SINGLE-IMAGE RULE" in frame_tool.description
     assert frame_tool.parameters["$defs"]["FrameQuality"]["enum"] == [
         "auto",
         "probe",
@@ -318,15 +341,21 @@ def test_exact_tool_surface_and_annotations() -> None:
     ):
         assert field in frame_tool.output_schema["properties"]
     code_output = tools["video_get_code"].output_schema["properties"]
-    assert "use video_get_frame for a general" in tools["video_get_code"].description
-    assert "Markdown byte-for-byte" in tools["video_get_code"].description
+    assert tools["video_get_code"].title == "Extract code or terminal text only"
+    assert tools["video_get_code"].description.startswith("CODE OR TERMINAL CONTENT ONLY.")
+    assert "photo" not in tools["video_get_code"].description.lower()
+    assert "screenshot" not in tools["video_get_code"].description.lower()
+    assert "frame" not in tools["video_get_code"].description.lower()
     assert {"render_path", "render_markdown", "render_expires_at"} <= code_output.keys()
     search_hit_schema = tools["video_search"].output_schema["$defs"]["SearchHit"]
     assert "context" in search_hit_schema["properties"]
-    assert (
-        "announcement from action in progress"
-        in search_hit_schema["properties"]["context"]["description"]
-    )
+    assert "action_phase" in search_hit_schema["properties"]
+    assert "span multiple action phases" in search_hit_schema["properties"]["context"][
+        "description"
+    ]
+    assert "matched spoken cue at start_s" in search_hit_schema["properties"][
+        "action_phase"
+    ]["description"]
     assert "video_get_frame" in search_hit_schema["properties"]["moment_id"]["description"]
     for name in ("video_get_transcript", "video_search", "video_list_moments"):
         cursor_schema = tools[name].parameters["properties"]["cursor"]
@@ -443,10 +472,11 @@ async def test_visual_tool_returns_text_image_and_structured_content() -> None:
         convert_result=True,
     )
     assert isinstance(result, CallToolResult)
-    assert [block.type for block in result.content] == ["text", "image"]
+    assert [block.type for block in result.content] == ["text", "image", "text"]
     assert result.structuredContent is not None
     assert result.structuredContent["code"] == "print('hello')"
     assert result.structuredContent["render_path"].endswith("frame.jpg")
+    assert result.content[2].text == result.structuredContent["render_markdown"]
     image_blocks = [block for block in result.content if isinstance(block, ImageContent)]
     assert len(image_blocks) == 1
     assert base64.b64decode(image_blocks[0].data) == b"image"
@@ -462,7 +492,7 @@ async def test_frame_tool_accepts_exact_moment_and_returns_structured_ocr() -> N
     )
 
     assert isinstance(result, CallToolResult)
-    assert [block.type for block in result.content] == ["text", "image"]
+    assert [block.type for block in result.content] == ["text", "image", "text"]
     assert result.structuredContent is not None
     assert result.structuredContent["moment_id"] == "moment"
     assert result.structuredContent["requested_moment_id"] == "moment"
@@ -477,6 +507,7 @@ async def test_frame_tool_accepts_exact_moment_and_returns_structured_ocr() -> N
     assert result.structuredContent["height"] == 180
     assert result.structuredContent["render_path"].endswith("frame.jpg")
     assert result.structuredContent["render_markdown"].startswith("![Keyframe frame")
+    assert result.content[2].text == result.structuredContent["render_markdown"]
     image_blocks = [block for block in result.content if isinstance(block, ImageContent)]
     assert len(image_blocks) == 1
     assert base64.b64decode(image_blocks[0].data) == b"image"

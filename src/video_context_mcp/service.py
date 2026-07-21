@@ -810,16 +810,20 @@ class KeyframeService:
                 if video.visual_coverage is VisualCoverage.FULL:
                     raise CacheError(
                         "No code or terminal moment was retained within 5 seconds in the full "
-                        "visual index. Use video_list_moments and video_get_frame to check for "
-                        "heuristic misclassification."
+                        "visual index. Do not retry video_get_code. If the request is for a "
+                        "general image, call video_get_frame once with the same t."
                     )
                 raise CacheError(
                     "No code or terminal moment was retained within 5 seconds in the sparse "
-                    "probe. Use video_list_moments or re-ingest with mode='full'."
+                    "probe. Do not retry video_get_code. If the request is for a general image, "
+                    "call video_get_frame once with the same t; if it truly requires code, "
+                    "re-ingest once with mode='full'."
                 )
         if moment.kind not in {MomentKind.CODE, MomentKind.TERMINAL}:
             raise CacheError(
-                f"Moment {moment.moment_id!r} is classified as {moment.kind.value}, not code or terminal."
+                f"Moment {moment.moment_id!r} is classified as {moment.kind.value}, not code or "
+                "terminal. Do not retry video_get_code. Call video_get_frame once with the same "
+                "moment_id for general visual evidence."
             )
         image_path = moment.crop_path or moment.frame_path
         image_data, mime_type = self._read_artifact(image_path)
@@ -1393,6 +1397,12 @@ class KeyframeService:
                 and video.has_audio
                 and self._has_whisper()
             )
+        if video.transcript_mode is TranscriptMode.AUTO and video.has_transcript:
+            sources = self.store.transcript_sources(video.video_id)
+            if requested_transcript is TranscriptMode.CAPTIONS:
+                return bool(sources) and sources <= _CAPTION_TRANSCRIPT_SOURCES
+            if requested_transcript is TranscriptMode.WHISPER:
+                return sources == frozenset({"whisper"})
         return (
             requested_transcript is TranscriptMode.AUTO
             and video.has_transcript
@@ -1633,6 +1643,9 @@ def _validate_time_range(start_s: float | None, end_s: float | None, label: str)
 
 _COMPACT_TRANSCRIPT_BIN_SECONDS = 60.0
 _AUTOMATIC_CAPTION_SOURCE = "automatic_captions"
+_CAPTION_TRANSCRIPT_SOURCES = frozenset(
+    {"captions", _AUTOMATIC_CAPTION_SOURCE, "embedded", "sidecar"}
+)
 _CAPTION_TOKEN_EDGE_RE = re.compile(r"^[^\w]+|[^\w]+$")
 
 
