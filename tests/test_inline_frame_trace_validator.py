@@ -183,6 +183,20 @@ def test_valid_trace_passes_and_deduplicates_started_completed_items() -> None:
     }
 
 
+def test_windows_render_path_is_absolute_when_validated_on_any_host() -> None:
+    render_path = r"C:\Users\runner\AppData\Local\Temp\frame-abc.jpg"
+    markdown = f"![Keyframe frame at 01:18:52](<{render_path}>)"
+    events = _valid_trace(final_text=f"{markdown}\n\nTimestamp: 01:18:52")
+    frame_item = _tool_items(events, "video_get_frame")[-1]
+    frame_item["result"]["content"][-1]["text"] = markdown
+    frame_item["result"]["structured_content"]["render_path"] = render_path
+    frame_item["result"]["structured_content"]["render_markdown"] = markdown
+
+    report = validate_trace(events, elapsed_s=12.0)
+
+    assert report.passed is True
+
+
 def _tool_items(events: list[dict[str, Any]], tool: str) -> list[dict[str, Any]]:
     return [
         item

@@ -280,7 +280,7 @@ def _validate_agent_text(
 def _absolute_render_path(value: str) -> bool:
     """Recognize absolute POSIX and Windows paths on any validation host."""
 
-    return Path(value).is_absolute() or bool(re.match(r"^[A-Za-z]:[\\/]", value))
+    return value.startswith("/") or bool(re.match(r"^[A-Za-z]:[\\/]", value))
 
 
 def _validate_render_artifact(
