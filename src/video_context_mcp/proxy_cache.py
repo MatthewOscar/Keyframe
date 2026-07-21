@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 import uuid
@@ -18,6 +19,23 @@ from video_context_mcp.errors import CacheError
 
 _SAFE_VIDEO_ID_RE = re.compile(r"[A-Za-z0-9._-]+\Z")
 _REMUX_TIMEOUT_S = 300
+
+
+def _set_regular_file_mtime(path: Path, timestamp: float) -> None:
+    """Update a regular file without relying on unsupported Windows arguments."""
+
+    times = (timestamp, timestamp)
+    if os.utime in os.supports_follow_symlinks:
+        os.utime(path, times, follow_symlinks=False)
+        return
+
+    # Windows does not implement ``follow_symlinks`` for os.utime. Re-check the
+    # file immediately before using its portable form so a cache link is never
+    # accepted intentionally on platforms without that safeguard.
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode):
+        raise OSError(f"Refusing to update a non-regular proxy-cache file: {path}")
+    os.utime(path, times)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +90,7 @@ class ProxyCache:
             return None
         if touch:
             try:
-                os.utime(candidate, (now, now), follow_symlinks=False)
+                _set_regular_file_mtime(candidate, now)
                 metadata = candidate.stat()
             except OSError as exc:
                 raise CacheError(f"Could not update proxy-cache access time: {candidate}") from exc
@@ -183,7 +201,7 @@ class ProxyCache:
                     old.unlink(missing_ok=True)
             os.replace(staged, final)
             now = time.time()
-            os.utime(final, (now, now), follow_symlinks=False)
+            _set_regular_file_mtime(final, now)
         except OSError as exc:
             raise CacheError(f"Could not publish the bounded proxy for {video_id!r}.") from exc
         finally:

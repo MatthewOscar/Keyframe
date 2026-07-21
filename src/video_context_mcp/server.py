@@ -340,8 +340,11 @@ def create_server(
             "quality='auto', retained moments are reused when they cover the request; timestamp "
             "gaps seek an authorized unchanged local source or retained low-resolution proxy. "
             "quality='source' is local-only because remote FFmpeg access stays closed-world. If "
-            "the host omits image content, label any answer OCR-derived rather than claiming "
-            "visual inspection."
+            "the user asks to show or share a frame, forward this tool's attached image block "
+            "directly and stop; never reopen the source in a browser or screenshot it. Create a "
+            "local copy only when the user explicitly asks to save or export a file. If the host "
+            "omits image content, label any answer OCR-derived rather than claiming visual "
+            "inspection."
         ),
         annotations=READ_ANNOTATIONS,
     )

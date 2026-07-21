@@ -181,20 +181,27 @@ or inspect plugin caches for additional Keyframe instructions.
    unchanged `moment_id` returned by shown search or moment listing for a known
    candidate. For a probe gap or exact narrated timestamp, use `t` with
    `quality="auto"`; inspect the reported `evidence_quality` and `actual_t`.
-3. If a code-looking candidate is rejected because its heuristic kind is not
+3. Treat a request to show or share a photo, screenshot, still, or frame as
+   complete when the selected `video_get_frame` image block has been forwarded
+   through the host's image-output channel. Inspect at most two candidates,
+   forward only the selected image, then answer immediately. Never reopen the
+   source URL in a browser, click video controls, re-download media, or take a
+   browser screenshot after Keyframe returned an image. Do not create a local
+   copy unless the user explicitly asks to save or export a file.
+4. If a code-looking candidate is rejected because its heuristic kind is not
    code or terminal, call `video_get_frame` at that retained timestamp. Do not
    escalate solely because classification was wrong.
-4. Call `video_get_frame` for diagrams, slides, terminal output, UI state, or
+5. Call `video_get_frame` for diagrams, slides, terminal output, UI state, or
    any OCR result that appears incomplete or surprising.
-5. Inspect the attached image before claiming visual verification. If the host
+6. Inspect the attached image before claiming visual verification. If the host
    says image content was omitted because the model lacks image input, never say
    “I saw” or “the frame confirms.” Label the answer OCR-derived and corroborate
    an exact identity with the same-window transcript plus consistent full-index
    OCR from another adjacent moment; otherwise preserve uncertainty.
-6. Before reporting an exact identity, require one temporally local evidence
+7. Before reporting an exact identity, require one temporally local evidence
    bundle containing the spoken referent and the visual title/number/state.
    Prefer the image over reconstructed OCR when they disagree.
-7. Do not claim code parses when `parses` is `false` or `null`. Preserve
+8. Do not claim code parses when `parses` is `false` or `null`. Preserve
    uncertainty and repair only what can be justified from the frame or tests.
 
 ## Protect sensitive screens

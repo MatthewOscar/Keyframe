@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.2.0",
-  "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, honest Keyframe provenance, warm-cache latency, and animated GIFs.",
+  "suite": "keyframe-mac-plugin-v0.2.1",
+  "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, direct frame sharing, honest Keyframe provenance, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
       "agent_total_wall_time_s",
@@ -65,6 +65,18 @@
         "Uses no whole-transcript or all-moments bulk dump and retrieves only the few local candidates needed",
         "If the attached image is available, inspects it; if the host reports image content omitted, labels the answer OCR-derived and corroborates it with adjacent same-window full-index OCR instead of claiming visual confirmation",
         "Reports the later issue title or number and merged state with the decisive timestamp"
+      ]
+    },
+    {
+      "id": "desktop-share-frame-directly",
+      "prompt": "Using the already indexed {{LONG_LOCAL_VIDEO}}, share one clear photo from the demonstrated motherboard-installation section.",
+      "success_criteria": [
+        "Reuses the existing video_id without another successful ingest",
+        "Uses bounded evidence routing and inspects no more than two candidate frames",
+        "Forwards only the selected video_get_frame image block through the host image-output channel",
+        "Answers immediately after selecting the frame instead of opening a browser or revisiting the source URL",
+        "Does not re-download media, manipulate video playback, take a browser screenshot, or request browser interaction permission",
+        "Creates no local copy unless the user explicitly asks to save or export a file"
       ]
     },
     {

@@ -61,6 +61,47 @@ def test_video_only_promotion_moves_owned_media_and_get_can_touch(
     assert datetime.fromisoformat(touched.expires_at).timestamp() == 1_400.0
 
 
+def test_promotion_and_touch_work_without_no_follow_utime_support(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows lacks os.utime(..., follow_symlinks=False)."""
+
+    now = 1_000.0
+    observed_kwargs: list[dict[str, object]] = []
+    original_utime = os.utime
+
+    def portable_utime(
+        path: os.PathLike[str] | str,
+        times: tuple[float, float],
+        **kwargs: object,
+    ) -> None:
+        observed_kwargs.append(kwargs)
+        original_utime(path, times, **kwargs)
+
+    monkeypatch.setattr(proxy_cache_module.os, "supports_follow_symlinks", set())
+    monkeypatch.setattr(proxy_cache_module.os, "utime", portable_utime)
+    monkeypatch.setattr(proxy_cache_module.time, "time", lambda: now)
+    source = tmp_path / "probe.mp4"
+    source.write_bytes(b"visual-only")
+    cache = ProxyCache(_settings(tmp_path))
+
+    published = cache.promote(
+        "portable-utime",
+        source,
+        contains_audio=False,
+        ffmpeg_binary="unused",
+    )
+    assert published is not None
+
+    now = 1_100.0
+    touched = cache.get("portable-utime", touch=True)
+
+    assert touched is not None
+    assert touched.path.stat().st_mtime == 1_100.0
+    assert observed_kwargs == [{}, {}]
+
+
 def test_get_removes_an_expired_proxy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

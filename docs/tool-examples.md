@@ -198,6 +198,12 @@ host says image content was omitted because the model lacks image input, do not
 say the frame was seen or visually confirmed. Label the result OCR-derived and
 preserve uncertainty.
 
+For “show/share a photo” requests, forward the selected MCP image block and
+answer immediately. Do not reopen the video in a browser, manipulate playback,
+or take a second screenshot of a frame Keyframe already returned. Inspect at
+most two candidates and create a local file only when the user explicitly asks
+to save or export one.
+
 ## Prune retained remote proxies
 
 Silent low-resolution remote proxies expire after seven days and are kept under

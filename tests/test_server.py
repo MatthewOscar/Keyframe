@@ -243,6 +243,8 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert {"moment_id", "t"} <= frame_properties.keys()
     assert {"moment_id", "t"}.isdisjoint(frame_required)
     assert frame_properties["quality"]["default"] == "auto"
+    assert "attached image block directly and stop" in frame_tool.description
+    assert "never reopen the source in a browser" in frame_tool.description
     assert frame_tool.parameters["$defs"]["FrameQuality"]["enum"] == [
         "auto",
         "probe",
