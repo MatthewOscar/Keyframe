@@ -148,12 +148,15 @@ def test_plugin_manifests_reference_client_specific_mcp_configs() -> None:
     assert codex["author"]["name"] == "Matthew Wyatt"
     assert codex["interface"]["developerName"] == "Matthew Wyatt"
     assert codex["interface"]["shortDescription"] == "Search what videos say and GIFs show"
-    short_prompt, discovery_prompt, *_ = codex["interface"]["defaultPrompt"]
-    assert len(codex["interface"]["defaultPrompt"]) == 4
+    short_prompt, discovery_prompt, implementation_prompt = codex["interface"]["defaultPrompt"]
+    assert len(codex["interface"]["defaultPrompt"]) == 3
+    assert all(len(prompt) <= 128 for prompt in codex["interface"]["defaultPrompt"])
     assert "single-pass evidence receipt" in short_prompt
     assert "only exact or visual evidence I request" in short_prompt
     assert "strongly relevant public video about this topic" in discovery_prompt
     assert "analyze the best match with Keyframe" in discovery_prompt
+    assert "verify code shown in this video" in implementation_prompt
+    assert "implement and test it" in implementation_prompt
     assert claude["author"]["name"] == "Matthew Wyatt"
     assert cursor["author"]["name"] == "Matthew Wyatt"
 

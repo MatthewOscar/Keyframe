@@ -36,7 +36,7 @@ web, and its library-wide `video_search` covers only previously indexed media.
 
 ### Prerequisites
 
-Keyframe v0.3.0 supports CPython 3.12, 3.13, and 3.14. Install these native
+Keyframe v0.3.1 supports CPython 3.12, 3.13, and 3.14. Install these native
 tools before starting:
 
 - FFmpeg and `ffprobe` for media inspection and frame extraction
@@ -58,7 +58,7 @@ brew install ffmpeg tesseract node uv
 
 The Whisper extra on Apple Silicon requires macOS 14 or newer because of its
 ONNX Runtime dependency. Intel macOS is not a supported Whisper/plugin target
-in v0.3.0.
+in v0.3.1.
 
 ### Install the command-line server
 
@@ -96,7 +96,7 @@ virtual environment, `pip install --upgrade 'video-context-mcp[whisper]'`.
 For a reproducible Build Week evaluation, pin the tested release explicitly:
 
 ```bash
-pip install 'video-context-mcp[whisper]==0.3.0'
+pip install 'video-context-mcp[whisper]==0.3.1'
 ```
 
 The checked-in plugin launchers and judge instructions use that exact pin;
@@ -140,14 +140,14 @@ Add the following to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.keyframe]
 command = "uvx"
-args = ["--python", "3.12", "--from", "video-context-mcp[whisper]==0.3.0", "video-context-mcp", "serve", "--transport", "stdio"]
+args = ["--python", "3.12", "--from", "video-context-mcp[whisper]==0.3.1", "video-context-mcp", "serve", "--transport", "stdio"]
 startup_timeout_sec = 180
 tool_timeout_sec = 1900
 env = { KEYFRAME_ALLOW_TEMP_UPLOADS = "true" }
 ```
 
 This direct MCP configuration is pinned for reproducibility. Remove
-`==0.3.0` from the `--from` value if you intentionally want the launcher to
+`==0.3.1` from the `--from` value if you intentionally want the launcher to
 follow the latest PyPI release instead.
 
 For local files, Keyframe uses workspace roots advertised by the MCP client.
@@ -163,12 +163,12 @@ shown. Cite the timestamps.”
 ### Install the Keyframe plugin in Codex and ChatGPT desktop
 
 The plugin bundles the same MCP server with the `keyframe-video-rag` workflow
-skill. The marketplace is pinned to `v0.3.0`; its launcher installs the exact
-`video-context-mcp[whisper]==0.3.0` PyPI release in an isolated Python 3.12
+skill. The marketplace is pinned to `v0.3.1`; its launcher installs the exact
+`video-context-mcp[whisper]==0.3.1` PyPI release in an isolated Python 3.12
 runtime, regardless of the user's system Python:
 
 ```bash
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.3.0
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.3.1
 codex plugin add keyframe@keyframe-tools
 ```
 
@@ -186,7 +186,7 @@ snapshot and the installed plugin:
 ```bash
 codex plugin remove keyframe@keyframe-tools
 codex plugin marketplace remove keyframe-tools
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.3.0
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.3.1
 codex plugin add keyframe@keyframe-tools
 ```
 
@@ -199,7 +199,7 @@ codex plugin marketplace add .
 
 Then restart the ChatGPT desktop app, open the Plugins Directory, select the
 **Keyframe** marketplace source, and install **Keyframe**. Start a new chat so
-the updated plugin and tools are loaded. Keyframe v0.3.0 targets this local
+the updated plugin and tools are loaded. Keyframe v0.3.1 targets this local
 desktop flow; it does not host a ChatGPT web app.
 
 Claude Code and Cursor can install the same repository as a marketplace, while
@@ -215,7 +215,7 @@ After installing the release plugin, judges can exercise the published wheel
 against the first-party fixture without building Keyframe from source:
 
 ```bash
-git clone --branch v0.3.0 --depth 1 \
+git clone --branch v0.3.1 --depth 1 \
   https://github.com/MatthewOscar/Keyframe.git
 cd Keyframe
 codex --model gpt-5.6
@@ -399,7 +399,7 @@ on macOS.
 
 ## Current limits
 
-- v0.3.0 accepts individual public videos and local animated GIFs, not playlists
+- v0.3.1 accepts individual public videos and local animated GIFs, not playlists
   or livestreams. Static GIFs should be attached as images; remote GIF URLs are
   not yet an advertised compatibility surface.
 - Private, members-only, age-restricted, DRM, cookie, and login flows are out of
@@ -436,7 +436,7 @@ on macOS.
 - Whisper is optional in the base Python package and bundled by the installable
   plugin. It can be resource intensive on CPU-only machines, and first use may
   download the configured model before ingestion begins.
-- Windows support is preview-level in v0.3.0.
+- Windows support is preview-level in v0.3.1.
 - The bundled registrations target local CLI and desktop sessions. Hosted
   agents cannot launch this STDIO process on the user's machine.
 

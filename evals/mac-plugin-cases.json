@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.3.0",
+  "suite": "keyframe-mac-plugin-v0.3.1",
   "description": "Supplementary regressions for single-pass short videos, topic-aware public-video discovery, attachment staging, long-video retries, exact on-screen identity, reliable inline frame rendering, honest no-vision behavior, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
