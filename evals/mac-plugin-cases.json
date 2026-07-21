@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.2.1",
-  "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, direct frame sharing, honest Keyframe provenance, warm-cache latency, and animated GIFs.",
+  "suite": "keyframe-mac-plugin-v0.2.2",
+  "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, reliable inline frame rendering, honest no-vision behavior, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
       "agent_total_wall_time_s",
@@ -14,6 +14,7 @@
   "variables": {
     "LOCAL_VIDEO": "A selected local recording with audio and no caption sidecar",
     "LONG_LOCAL_VIDEO": "A selected local recording between 30 minutes and 4 hours with audio and no caption sidecar",
+    "MOTHERBOARD_VIDEO": "The public Linus Tech Tips PC-build guide at https://youtu.be/s1fxZ-VWs2U, already indexed in the warm cache",
     "EXACT_IDENTITY_VIDEO": "A first-party macOS screen recording with audio that shows one issue being merely considered, then later shows a different issue while a mentor says it was fixed and merged; both issue identities are readable on screen",
     "ANIMATED_GIF": "A first-party animated GIF with at least three visibly distinct states"
   },
@@ -69,14 +70,30 @@
     },
     {
       "id": "desktop-share-frame-directly",
-      "prompt": "Using the already indexed {{LONG_LOCAL_VIDEO}}, share one clear photo from the demonstrated motherboard-installation section.",
+      "model": "gpt-5.3-codex-spark",
+      "prompt": "Using the already indexed {{MOTHERBOARD_VIDEO}}, can you share a clear photo from the video of the demonstrated motherboard installation?",
       "success_criteria": [
         "Reuses the existing video_id without another successful ingest",
-        "Uses bounded evidence routing and inspects no more than two candidate frames",
-        "Forwards only the selected video_get_frame image block through the host image-output channel",
-        "Answers immediately after selecting the frame instead of opening a browser or revisiting the source URL",
-        "Does not re-download media, manipulate video playback, take a browser screenshot, or request browser interaction permission",
-        "Creates no local copy unless the user explicitly asks to save or export a file"
+        "Warm-cache agent wall time is under 30 seconds",
+        "Uses region=full and quality=auto, rejects a title-card candidate, and tries the first demonstration frame about 5-10 seconds after the section anchor",
+        "Calls video_get_frame for at most two distinct candidates and never retrieves the same moment_id or timestamp twice",
+        "Pastes the selected structured render_markdown verbatim so the image renders inline from render_path",
+        "The render_path bytes equal the sole MCP image block bytes",
+        "Makes no browser, shell, terminal, web-download, playback, screenshot, extra-copy, or permission-request action",
+        "Never requests quality=source for the remote video",
+        "Makes no unsupported component, placement, layout, condition, or framing claim; any meaningful extracted text is explicitly labeled Tesseract OCR"
+      ]
+    },
+    {
+      "id": "desktop-share-frame-forward-vision",
+      "model": "image-capable GPT-5.6",
+      "prompt": "Using the already indexed {{MOTHERBOARD_VIDEO}}, can you share a clear photo from the video of the demonstrated motherboard installation?",
+      "success_criteria": [
+        "Reuses the existing video_id and follows the same at-most-two-distinct-frame policy",
+        "Pastes the selected render_markdown verbatim without browser, shell, download, screenshot, or permission actions",
+        "The image renders inline and matches the exact sole MCP image block bytes",
+        "Any accompanying visual description is based on image inspection and matches the displayed frame",
+        "Never claims that components outside the selected frame are visible"
       ]
     },
     {

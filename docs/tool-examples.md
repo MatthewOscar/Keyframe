@@ -146,7 +146,9 @@ Use bounded pages for a targeted episode rather than dumping every moment.
 ```
 
 Provide exactly one of `moment_id` or `t`. The response contains structured
-code metadata plus one MCP image block. When `parses` is false/null or
+code metadata plus one MCP image block. It also returns `render_path`,
+ready-to-copy `render_markdown`, and `render_expires_at` for a private temporary
+copy containing the exact same encoded bytes. When `parses` is false/null or
 confidence is low, inspect the image and preserve uncertainty. Moment IDs are
 opaque and generation-scoped; retrieve fresh IDs after upgrading probe coverage
 to full or performing any other refresh/re-ingestion.
@@ -188,21 +190,36 @@ repeat the original fast ingest once with `refresh=true`, discard prior moment
 IDs/cursors, and retry that timestamp. This refresh rebuilds the small seek
 proxy without running full-video OCR.
 
-The structured result reports `requested_quality`, `evidence_quality`, pixel dimensions,
-the selector, retained bounds when applicable, `requested_t_covered`,
-`actual_t`, OCR/confidence, and visual coverage. Cite `actual_t` and describe the
-attached image rather than inferring from a nearby probe. A targeted seek can
-settle a probe gap without full-video OCR; full mode is still appropriate for a
-sequence, an exhaustive visual claim, or several unresolved moments. If the
-host says image content was omitted because the model lacks image input, do not
-say the frame was seen or visually confirmed. Label the result OCR-derived and
-preserve uncertainty.
+The structured result reports `requested_quality`, `evidence_quality`, pixel
+dimensions, the selector, retained bounds when applicable,
+`requested_t_covered`, `actual_t`, OCR/confidence, visual coverage,
+`render_path`, `render_markdown`, and `render_expires_at`. The temporary path is
+OS-native; its Markdown destination uses forward slashes and angle brackets so
+Windows paths and spaces render correctly. Cite `actual_t` and describe the
+image only after visual inspection rather than inferring from a nearby probe.
+A targeted seek can settle a probe gap without full-video OCR; full mode is
+still appropriate for a sequence, an exhaustive visual claim, or several
+unresolved moments.
 
-For “show/share a photo” requests, forward the selected MCP image block and
-answer immediately. Do not reopen the video in a browser, manipulate playback,
-or take a second screenshot of a frame Keyframe already returned. Inspect at
-most two candidates and create a local file only when the user explicitly asks
-to save or export one.
+For “show/share a photo” requests, paste the selected result's
+`render_markdown` verbatim and stop. Do not open a browser, invoke terminal or
+shell tools, download media, manipulate playback, take a screenshot, create a
+second copy, or request permission. Inspect at most two distinct candidates,
+never retrieve the same moment/timestamp twice, and never request
+`quality="source"` for remote video. For a whole-object or overview request,
+use `region="full"`, reject title-card candidates, and try the first
+demonstration frame about 5-10 seconds after the section anchor.
+
+A model with image input may inspect and accurately describe the selected
+frame. A model without image input must still render it through
+`render_markdown`, but accompanying text is limited to timestamp, provenance,
+and meaningful text explicitly labeled `Tesseract OCR:`. OCR alone does not
+justify claims about visible objects, layout, placement, condition, or framing.
+
+Rendered-frame files have a seven-day TTL and share a 256 MiB quota in the
+private Keyframe temp namespace; quota pressure can evict them earlier. Keyframe
+prunes them at startup and after publication. They are disposable chat-display
+artifacts, not user-selected exports.
 
 ## Prune retained remote proxies
 

@@ -17,14 +17,15 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 - [x] README explanation of Codex collaboration and human decisions.
 - [x] Reproducible eval prompts, including video evidence to a tested change.
 - [x] A narrated demo script designed to remain below three minutes.
-- [x] Ready-to-paste English Devpost copy with no-build test instructions and
-      explicit placeholders for the demo URL and real Session ID.
+- [x] Internal factual Devpost worksheet with no-build test instructions and
+      explicit placeholders for the demo URL and real Session ID; Matthew must
+      independently write the submitted prose.
 
 ## Human release steps
 
 - [ ] Matthew independently writes every Devpost submission field; do not paste
       AI-generated prose from `docs/devpost-submission.md`.
-- [ ] Review the complete v0.2.1 diff, commit it to `main`, and confirm CI.
+- [ ] Review the complete v0.2.2 diff, commit it to `main`, and confirm CI.
 - [x] Create and push immutable tag `v0.1.0`.
 - [x] Create and push the verified agent-efficiency release tag `v0.1.3`.
 - [x] Create the PyPI project, configure Trusted Publishing, and publish the
@@ -33,7 +34,9 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
       confirm its PyPI and GitHub releases complete successfully.
 - [x] Create and push the verified smart-retrieval release tag `v0.2.0`, then
       confirm its PyPI and GitHub releases complete successfully.
-- [ ] Create and push the Windows/frame-sharing patch release tag `v0.2.1`,
+- [x] Create and push the Windows/frame-sharing patch release tag `v0.2.1`,
+      then confirm its PyPI and GitHub releases complete successfully.
+- [ ] Create and push the reliable inline-rendering release tag `v0.2.2`,
       then confirm its PyPI and GitHub releases complete successfully.
 - [ ] Install the tagged plugin in Codex and ChatGPT desktop and run the
       headline flow with Codex visibly configured to `gpt-5.6`.
@@ -43,7 +46,8 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
       a public YouTube tutorial for the remote-ingest demo shot.
 - [ ] Run all ten prompts in `evals/cases.json` and record observed outcomes.
 - [ ] Run the Mac plugin regressions in `evals/mac-plugin-cases.json` and record
-      attachment staging, provenance, warm-cache timing, and animated-GIF results.
+      attachment staging, provenance, warm-cache timing, no-vision inline frame
+      rendering, forward visual accuracy, and animated-GIF results.
 - [ ] Record a clear, English-language narrated demo no longer than 2:59 that
       shows the working product and explicitly explains how Codex and GPT-5.6
       were used.

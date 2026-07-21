@@ -73,6 +73,7 @@ from video_context_mcp.models import (
     VisualMoment,
 )
 from video_context_mcp.proxy_cache import ProxyCache
+from video_context_mcp.render_cache import RenderedFrameCache
 from video_context_mcp.storage import KeyframeStore
 from video_context_mcp.transcription import transcribe_media, whisper_available
 from video_context_mcp.vision import (
@@ -174,6 +175,7 @@ class KeyframeService:
         self._transcribe = transcribe
         self._has_whisper = has_whisper
         self._proxy_cache = ProxyCache(self.settings)
+        self._render_cache = RenderedFrameCache(self.settings)
         self._locks_dir = self.settings.home / "locks"
         self._locks_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._global_ingest_lock = FileLock(str(self._locks_dir / "ingest-global.lock"))
@@ -825,6 +827,11 @@ class KeyframeService:
             )
         image_path = moment.crop_path or moment.frame_path
         image_data, mime_type = self._read_artifact(image_path)
+        render = self._render_cache.publish(
+            image_data,
+            mime_type,
+            timestamp_s=moment.actual_t,
+        )
         return VisualPayload(
             result=CodeResult(
                 video_id=video_id,
@@ -839,6 +846,9 @@ class KeyframeService:
                 kind=moment.kind,
                 visual_coverage=video.visual_coverage,
                 notes=moment.notes,
+                render_path=str(render.path),
+                render_markdown=render.markdown,
+                render_expires_at=render.expires_at,
             ),
             image_data=image_data,
             mime_type=mime_type,
@@ -939,6 +949,11 @@ class KeyframeService:
             else moment.frame_path
         )
         image_data, mime_type, width, height = self._read_frame_artifact(image_path)
+        render = self._render_cache.publish(
+            image_data,
+            mime_type,
+            timestamp_s=moment.actual_t,
+        )
         return VisualPayload(
             result=FrameResult(
                 video_id=video.video_id,
@@ -963,6 +978,9 @@ class KeyframeService:
                 ocr_text=moment.ocr_text,
                 ocr_confidence=moment.ocr_confidence,
                 visual_coverage=video.visual_coverage,
+                render_path=str(render.path),
+                render_markdown=render.markdown,
+                render_expires_at=render.expires_at,
             ),
             image_data=image_data,
             mime_type=mime_type,
@@ -1014,6 +1032,12 @@ class KeyframeService:
                 image, _ = auto_crop_text_region(analyzed.frame_path, analyzed.ocr)
             encoded = encode_image(image)
 
+        render = self._render_cache.publish(
+            encoded.data,
+            encoded.mime_type,
+            timestamp_s=sample.timestamp_s,
+        )
+
         return VisualPayload(
             result=FrameResult(
                 video_id=video.video_id,
@@ -1034,6 +1058,9 @@ class KeyframeService:
                 requested_t=requested_t,
                 requested_t_covered=True if requested_t is not None else None,
                 visual_coverage=video.visual_coverage,
+                render_path=str(render.path),
+                render_markdown=render.markdown,
+                render_expires_at=render.expires_at,
             ),
             image_data=encoded.data,
             mime_type=encoded.mime_type,
@@ -1083,6 +1110,11 @@ class KeyframeService:
         if proxy is None:
             return None
         return proxy.path, FrameEvidenceQuality.PROBE, VISUAL_PROBE_MAX_EDGE
+
+    def frame_source_is_local(self, video_id: str) -> bool:
+        """Report whether MCP workspace roots can affect exact frame seeking."""
+
+        return self._require_video(video_id).source_kind == SourceKind.LOCAL.value
 
     def _extract_and_publish(
         self,
@@ -1517,6 +1549,10 @@ class KeyframeService:
                     self._proxy_cache.prune()
                 except (CacheError, OSError):
                     logger.warning("Could not prune the bounded proxy cache", exc_info=True)
+                try:
+                    self._render_cache.prune(create=False)
+                except (CacheError, OSError):
+                    logger.warning("Could not prune temporary rendered frames", exc_info=True)
         except Timeout:
             # Another process is actively ingesting into this KEYFRAME_HOME.
             # Its own completion or a later process startup will perform cleanup.

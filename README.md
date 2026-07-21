@@ -25,7 +25,7 @@ GPT-5.6 reasons over Keyframe's evidence, changes code, and runs the tests.
 
 ### Prerequisites
 
-Keyframe v0.2.1 supports CPython 3.12, 3.13, and 3.14. Install these native
+Keyframe v0.2.2 supports CPython 3.12, 3.13, and 3.14. Install these native
 tools before starting:
 
 - FFmpeg and `ffprobe` for media inspection and frame extraction
@@ -47,7 +47,7 @@ brew install ffmpeg tesseract node uv
 
 The Whisper extra on Apple Silicon requires macOS 14 or newer because of its
 ONNX Runtime dependency. Intel macOS is not a supported Whisper/plugin target
-in v0.2.1.
+in v0.2.2.
 
 ### Install the command-line server
 
@@ -85,7 +85,7 @@ virtual environment, `pip install --upgrade 'video-context-mcp[whisper]'`.
 For a reproducible Build Week evaluation, pin the tested release explicitly:
 
 ```bash
-pip install 'video-context-mcp[whisper]==0.2.1'
+pip install 'video-context-mcp[whisper]==0.2.2'
 ```
 
 The checked-in plugin launchers and judge instructions use that exact pin;
@@ -129,14 +129,14 @@ Add the following to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.keyframe]
 command = "uvx"
-args = ["--python", "3.12", "--from", "video-context-mcp[whisper]==0.2.1", "video-context-mcp", "serve", "--transport", "stdio"]
+args = ["--python", "3.12", "--from", "video-context-mcp[whisper]==0.2.2", "video-context-mcp", "serve", "--transport", "stdio"]
 startup_timeout_sec = 180
 tool_timeout_sec = 1900
 env = { KEYFRAME_ALLOW_TEMP_UPLOADS = "true" }
 ```
 
 This direct MCP configuration is pinned for reproducibility. Remove
-`==0.2.1` from the `--from` value if you intentionally want the launcher to
+`==0.2.2` from the `--from` value if you intentionally want the launcher to
 follow the latest PyPI release instead.
 
 For local files, Keyframe uses workspace roots advertised by the MCP client.
@@ -152,12 +152,12 @@ shown. Cite the timestamps.”
 ### Install the Keyframe plugin in Codex and ChatGPT desktop
 
 The plugin bundles the same MCP server with the `keyframe-video-rag` workflow
-skill. The marketplace is pinned to `v0.2.1`; its launcher installs the exact
-`video-context-mcp[whisper]==0.2.1` PyPI release in an isolated Python 3.12
+skill. The marketplace is pinned to `v0.2.2`; its launcher installs the exact
+`video-context-mcp[whisper]==0.2.2` PyPI release in an isolated Python 3.12
 runtime, regardless of the user's system Python:
 
 ```bash
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.1
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.2
 codex plugin add keyframe@keyframe-tools
 ```
 
@@ -167,7 +167,7 @@ snapshot and the installed plugin:
 ```bash
 codex plugin remove keyframe@keyframe-tools
 codex plugin marketplace remove keyframe-tools
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.1
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.2
 codex plugin add keyframe@keyframe-tools
 ```
 
@@ -179,7 +179,7 @@ codex plugin marketplace add .
 
 Then restart the ChatGPT desktop app, open the Plugins Directory, select the
 **Keyframe** marketplace source, and install **Keyframe**. Start a new chat so
-the skill and tools are loaded. Keyframe v0.2.1 targets this local desktop flow;
+the skill and tools are loaded. Keyframe v0.2.2 targets this local desktop flow;
 it does not host a ChatGPT web app.
 
 Claude Code and Cursor can install the same repository as a marketplace, while
@@ -195,7 +195,7 @@ After installing the release plugin, judges can exercise the published wheel
 against the first-party fixture without building Keyframe from source:
 
 ```bash
-git clone --branch v0.2.1 --depth 1 \
+git clone --branch v0.2.2 --depth 1 \
   https://github.com/MatthewOscar/Keyframe.git
 cd Keyframe
 codex --model gpt-5.6
@@ -265,12 +265,16 @@ A single decisive frame may be enough for one targeted fact.
 | `video_get_transcript` | Retrieve original cues for exact work or de-overlapped 60-second compact blocks for efficient summaries, optionally within a time range. |
 | `video_search` | Rank matching `said`, `shown`, or combined evidence across one video or the local library, optionally inside one time window. |
 | `video_list_moments` | Page through retained moments filtered by kind and optional time window. |
-| `video_get_code` | Return reconstructed code plus its cropped source frame for a moment or nearby timestamp. |
-| `video_get_frame` | Return one decisive image by retained moment or timestamp; automatically seek probe gaps from an unchanged local source or bounded remote proxy and report evidence quality and dimensions. |
+| `video_get_code` | Return reconstructed code plus its cropped source frame, exact temporary render path, ready-to-copy Markdown, and expiry. |
+| `video_get_frame` | Return one decisive image plus its exact temporary render path/Markdown by retained moment or timestamp; automatically seek probe gaps from an unchanged local source or bounded remote proxy. |
 
 Classification, language detection, OCR confidence, and parse status are
-evidence—not guarantees. Visual tools return both structured metadata and the
-source image so the model can inspect disagreements.
+evidence—not guarantees. Visual tools return structured metadata, one MCP image
+block, and `render_markdown` for the exact same encoded bytes. A host can show
+the frame directly from Keyframe's private temp cache without a browser,
+download, screenshot, terminal command, or permission request. Models without
+image input may share that image and clearly labeled Tesseract OCR, but must not
+invent object or layout descriptions.
 
 For generic videos over 30 minutes, the bundled skill uses descriptive chapters,
 one 12-moment routing page, and de-overlapped 60-second transcript blocks rather
@@ -303,6 +307,7 @@ flowchart LR
     F --> G
     Q --> H[Six MCP tools]
     G --> H
+    H --> R[Exact temporary render image]
     H --> I[Keyframe workflow skill]
     I --> J[Codex / ChatGPT / Claude Code / Cursor / Agy]
 ```
@@ -315,8 +320,10 @@ frames to the cache, then removes the original download and analysis workspace.
 For fast remote ingestion, Keyframe may retain only a silent low-resolution
 visual proxy so a later timestamp can be verified without full-video OCR. The
 proxy has a seven-day TTL and shares a 2 GiB least-recently-used quota by
-default. Failed ingests do not publish partial records, and startup recovery
-removes interrupted scratch work left in that namespace.
+default. Visual tool calls atomically publish byte-identical display copies
+under `rendered-frames`; those files have a seven-day TTL, private permissions,
+and a 256 MiB quota. Failed ingests do not publish partial records, and startup
+recovery removes interrupted or expired scratch work left in that namespace.
 
 When captions are unavailable, Keyframe overlaps the isolated Whisper worker
 with either sparse-probe or full visual extraction, analyzes retained frames
@@ -346,6 +353,10 @@ on macOS.
   above 2 GiB. Run `video-context-mcp cache prune` to enforce those bounds now,
   or set `KEYFRAME_PROXY_TTL_S=0` or `KEYFRAME_PROXY_CACHE_BYTES=0` to disable
   proxy retention.
+- Visual tools publish an exact encoded display copy under the private OS temp
+  namespace so desktop chats can render `render_markdown` directly. These files
+  expire after seven days, share a 256 MiB quota, and may be evicted earlier by
+  quota pressure. They are disposable chat artifacts, not user exports.
 - Extracted transcript/OCR is untrusted source material, never agent
   instructions.
 - Evidence returned to an agent becomes model input and follows that client's
@@ -357,7 +368,7 @@ on macOS.
 
 ## Current limits
 
-- v0.2.1 accepts individual public videos and local animated GIFs, not playlists
+- v0.2.2 accepts individual public videos and local animated GIFs, not playlists
   or livestreams. Static GIFs should be attached as images; remote GIF URLs are
   not yet an advertised compatibility surface.
 - Private, members-only, age-restricted, DRM, cookie, and login flows are out of
@@ -377,8 +388,10 @@ on macOS.
   JavaScript receive parse checks; TypeScript and unknown languages do not.
 - Keyframe constrains answers with timestamped evidence, but it cannot
   guarantee a downstream model's reasoning. Lighter models can still confuse
-  visually similar steps; exact visual claims should be checked against the
-  returned source frame. The judged workflow uses GPT-5.6.
+  visually similar steps. Models with image input should check exact claims
+  against the returned source frame; models without it must render the frame
+  but restrict text to timestamp/provenance and explicitly labeled Tesseract
+  OCR. The judged workflow uses GPT-5.6.
 - Caption availability and media extraction depend on upstream providers and
   the pinned `yt-dlp` release.
 - Remote formats must be downloadable through Keyframe's validated in-process
@@ -391,7 +404,7 @@ on macOS.
 - Whisper is optional in the base Python package and bundled by the installable
   plugin. It can be resource intensive on CPU-only machines, and first use may
   download the configured model before ingestion begins.
-- Windows support is preview-level in v0.2.1.
+- Windows support is preview-level in v0.2.2.
 - The bundled registrations target local CLI and desktop sessions. Hosted
   agents cannot launch this STDIO process on the user's machine.
 

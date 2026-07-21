@@ -171,6 +171,12 @@ class Settings:
         return self.tmp_dir / "uploads"
 
     @property
+    def rendered_frames_dir(self) -> Path:
+        """Private, disposable images that MCP hosts can render directly in chat."""
+
+        return self.tmp_dir / "rendered-frames"
+
+    @property
     def proxy_dir(self) -> Path:
         """Bounded derived-media cache used for exact seeking after fast ingest."""
 

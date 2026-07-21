@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import re
 import shutil
@@ -171,6 +172,19 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                         sum(isinstance(block, types.ImageContent) for block in exact_frame.content)
                         == 1
                     )
+                    exact_image = next(
+                        block
+                        for block in exact_frame.content
+                        if isinstance(block, types.ImageContent)
+                    )
+                    exact_render = Path(str(exact_frame.structuredContent["render_path"]))
+                    assert exact_render.read_bytes() == base64.b64decode(exact_image.data)
+                    assert exact_frame.structuredContent["render_markdown"].endswith(
+                        f"(<{exact_render.as_posix()}>)"
+                    )
+                    assert str(exact_frame.structuredContent["render_expires_at"]).endswith(
+                        "+00:00"
+                    )
 
                     probe_moments = await session.call_tool(
                         "video_list_moments",
@@ -220,6 +234,12 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                     assert code.structuredContent["visual_coverage"] == "full"
                     assert "slugify" in str(code.structuredContent["code"]).lower()
                     assert [block.type for block in code.content] == ["text", "image"]
+                    code_image = next(
+                        block for block in code.content if isinstance(block, types.ImageContent)
+                    )
+                    assert Path(str(code.structuredContent["render_path"])).read_bytes() == (
+                        base64.b64decode(code_image.data)
+                    )
 
                     frame = await session.call_tool(
                         "video_get_frame", {"video_id": video_id, "t": 5.0}
@@ -230,6 +250,12 @@ async def test_real_stdio_handshake_tool_discovery_progress_and_cached_query(
                     assert frame.structuredContent["requested_moment_id"] is None
                     assert frame.structuredContent["requested_t_covered"] is True
                     assert [block.type for block in frame.content] == ["text", "image"]
+                    frame_image = next(
+                        block for block in frame.content if isinstance(block, types.ImageContent)
+                    )
+                    assert Path(str(frame.structuredContent["render_path"])).read_bytes() == (
+                        base64.b64decode(frame_image.data)
+                    )
 
                     invalid_code = await session.call_tool("video_get_code", {"video_id": video_id})
                     assert invalid_code.isError is True

@@ -303,6 +303,22 @@ class CodeResult(StrictModel):
     kind: MomentKind
     visual_coverage: VisualCoverage = VisualCoverage.NONE
     notes: tuple[str, ...] = ()
+    render_path: str = Field(
+        description=(
+            "Absolute OS-native path to a private, temporary copy of the exact attached image."
+        )
+    )
+    render_markdown: str = Field(
+        description=(
+            "Ready-to-copy Markdown that renders the exact attached image without browser, "
+            "shell, download, or permission steps."
+        )
+    )
+    render_expires_at: str = Field(
+        description=(
+            "UTC ISO-8601 TTL expiry for render_path; global quota pressure may evict it earlier."
+        )
+    )
 
 
 class FrameResult(StrictModel):
@@ -362,6 +378,22 @@ class FrameResult(StrictModel):
         ),
     )
     visual_coverage: VisualCoverage = VisualCoverage.NONE
+    render_path: str = Field(
+        description=(
+            "Absolute OS-native path to a private, temporary copy of the exact attached image."
+        )
+    )
+    render_markdown: str = Field(
+        description=(
+            "Ready-to-copy Markdown that renders the exact attached image without browser, "
+            "shell, download, or permission steps."
+        )
+    )
+    render_expires_at: str = Field(
+        description=(
+            "UTC ISO-8601 TTL expiry for render_path; global quota pressure may evict it earlier."
+        )
+    )
 
 
 class CodeSelector(StrictModel):

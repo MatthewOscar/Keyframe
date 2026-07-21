@@ -199,8 +199,7 @@ def test_marketplaces_point_to_the_same_self_contained_plugin() -> None:
     assert codex["plugins"][0]["source"]["path"] == "./plugins/keyframe"
     assert {claude["name"], cursor["name"], codex["name"]} == {"keyframe-tools"}
     assert all(
-        catalog["name"] != catalog["plugins"][0]["name"]
-        for catalog in (claude, cursor, codex)
+        catalog["name"] != catalog["plugins"][0]["name"] for catalog in (claude, cursor, codex)
     )
     assert all(catalog["plugins"][0]["name"] == "keyframe" for catalog in (claude, cursor, codex))
     assert set(claude) == {"name", "owner", "description", "plugins"}
@@ -226,13 +225,10 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "For each source, make at most one successful fast ingest" in contents[0]
     assert "Do not split, restage, or reconstruct the source" in contents[0]
     assert "Skip generic search for a whole-video summary" in contents[0]
-    assert (
-        "Map explicit requests for \"quick,\" \"fast,\" \"overview,\" or \"gist\""
-        in contents[0]
-    )
+    assert 'Map explicit requests for "quick," "fast," "overview," or "gist"' in contents[0]
     assert "generic whole-video summary over 30 minutes" in contents[0]
     assert "use exactly one routing" in contents[0]
-    assert "`view=\"compact\"`" in contents[0]
+    assert '`view="compact"`' in contents[0]
     assert "`limit=200`" in contents[0]
     assert "`proxy_cached=false`" in contents[0]
     assert "`refresh=true`" in contents[0]
@@ -245,10 +241,15 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "one targeted seek cannot settle" in contents[0]
     assert "Do not fan transcript pages or windows out to multiple agents" in contents[0]
     assert "count Keyframe calls" in contents[0]
-    assert "forward only the selected image, then answer immediately" in contents[0]
-    assert "Never reopen the" in contents[0]
-    assert "source URL in a browser" in contents[0]
-    assert "unless the user explicitly asks to save or export" in contents[0]
+    assert "copy the" in contents[0]
+    assert "`render_markdown` verbatim" in contents[0]
+    assert "not open a browser, use terminal or shell tools" in contents[0]
+    assert "Never retrieve the same `moment_id`" in contents[0]
+    assert 'never request `quality="source"` for a remote video' in contents[0]
+    assert 'use `region="full"`, never' in contents[0]
+    assert "about 5-10 seconds" in contents[0]
+    assert "A model without image input must still paste" in contents[0]
+    assert "It must not infer components" in contents[0]
     assert "Copy it byte-for-byte" in contents[0]
     assert "Open this skill only through the exact host-provided locator" in contents[0]
     assert "do not search for another copy" in contents[0]
@@ -258,7 +259,7 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "Pass that episode's `start_s`/`end_s`" in contents[0]
     assert "never join an ID or" in contents[0]
     assert "`requested_t_covered`" in contents[0]
-    assert "Label the answer OCR-derived" in contents[0]
+    assert "explicitly labeled `Tesseract OCR:`" in contents[0]
     assert "temporally local evidence" in contents[0]
     server_source = (ROOT / "src/video_context_mcp/server.py").read_text(encoding="utf-8")
     assert "Ingest each source with mode='fast' once" in server_source
@@ -270,4 +271,30 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "Never select a higher-ranked OCR hit from another interval" in server_source
     assert "view='compact'" in server_source
     assert "quality='auto' before upgrading" in server_source
-    assert "never claim visual inspection" in server_source
+    assert "copy render_markdown verbatim" in server_source
+    assert "must not infer objects, layout, condition, or framing" in server_source
+
+
+def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
+    suite = _load(ROOT / "evals" / "mac-plugin-cases.json")
+    cases = {case["id"]: case for case in suite["cases"]}
+    no_vision = cases["desktop-share-frame-directly"]
+    forward = cases["desktop-share-frame-forward-vision"]
+
+    assert no_vision["model"] == "gpt-5.3-codex-spark"
+    no_vision_criteria = " ".join(no_vision["success_criteria"])
+    for requirement in (
+        "under 30 seconds",
+        "at most two distinct",
+        "render_markdown verbatim",
+        "sole MCP image block bytes",
+        "no browser, shell, terminal, web-download",
+        "Never requests quality=source",
+        "Tesseract OCR",
+    ):
+        assert requirement in no_vision_criteria
+
+    assert forward["model"] == "image-capable GPT-5.6"
+    forward_criteria = " ".join(forward["success_criteria"])
+    assert "description is based on image inspection" in forward_criteria
+    assert "matches the displayed frame" in forward_criteria

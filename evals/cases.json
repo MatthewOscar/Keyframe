@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-v0.2.1",
+  "suite": "keyframe-v0.2.2",
   "description": "Ten reproducible prompts for a prepared first-party tutorial fixture and demo target.",
   "variables": {
     "VIDEO_SOURCE": "Path or public URL supplied by the evaluator",
@@ -62,7 +62,7 @@
       "name": "Inspect the nearest frame",
       "prompt": "Get the nearest full frame to the fixture's requested timestamp in {{VIDEO_ID}}. Report both requested and actual time and describe only visible evidence.",
       "expected_tools": ["video_get_frame"],
-      "success_criteria": ["Reports requested and actual timestamps", "Returns an MCP image", "Does not infer content absent from the frame"]
+      "success_criteria": ["Reports requested and actual timestamps", "Returns exactly one MCP image plus render_path, render_markdown, and render_expires_at", "The render path bytes equal the MCP image bytes", "Does not infer content absent from the frame"]
     },
     {
       "id": "cache-idempotence",

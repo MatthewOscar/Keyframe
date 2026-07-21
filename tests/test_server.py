@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, ImageContent
 from pydantic import ValidationError
 
+import video_context_mcp.server as server_module
 from video_context_mcp.errors import SourceError
 from video_context_mcp.models import (
     CodeResult,
@@ -31,6 +33,10 @@ from video_context_mcp.server import _client_roots, _root_uri_to_path, create_se
 
 
 class FakeService:
+    def frame_source_is_local(self, video_id: str) -> bool:
+        del video_id
+        return True
+
     def ingest(self, source: str, **kwargs: object) -> IngestResult:
         return IngestResult(
             video_id="demo",
@@ -71,6 +77,11 @@ class FakeService:
                 parses=True,
                 confidence=0.9,
                 kind=MomentKind.CODE,
+                render_path="/tmp/keyframe/rendered-frames/frame.jpg",
+                render_markdown=(
+                    "![Keyframe frame at 00:01](</tmp/keyframe/rendered-frames/frame.jpg>)"
+                ),
+                render_expires_at="2026-07-27T00:00:00+00:00",
             ),
             image_data=b"image",
             mime_type="image/jpeg",
@@ -98,6 +109,11 @@ class FakeService:
                 classification_confidence=0.88,
                 ocr_text="print('hello')",
                 ocr_confidence=0.9,
+                render_path="/tmp/keyframe/rendered-frames/frame.jpg",
+                render_markdown=(
+                    "![Keyframe frame at 00:01](</tmp/keyframe/rendered-frames/frame.jpg>)"
+                ),
+                render_expires_at="2026-07-27T00:00:00+00:00",
             ),
             image_data=b"image",
             mime_type="image/jpeg",
@@ -111,6 +127,17 @@ class RecordingTranscriptService(FakeService):
     def get_transcript(self, video_id: str, **kwargs: object) -> TranscriptPage:
         self.limits.append(int(kwargs["limit"]))
         return super().get_transcript(video_id, **kwargs)
+
+
+class RemoteUncoveredFrameService(FakeService):
+    def frame_source_is_local(self, video_id: str) -> bool:
+        del video_id
+        return False
+
+    def get_frame(self, video_id: str, **kwargs: object) -> SimpleNamespace:
+        payload = super().get_frame(video_id, **kwargs)
+        payload.result = payload.result.model_copy(update={"requested_t_covered": False})
+        return payload
 
 
 def test_mcp_root_uri_is_canonicalized_and_rejects_nonlocal_forms(tmp_path: Path) -> None:
@@ -204,6 +231,16 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert tools["video_ingest"].annotations.readOnlyHint is False
     assert tools["video_search"].annotations is not None
     assert tools["video_search"].annotations.readOnlyHint is True
+    for name in (
+        "video_get_transcript",
+        "video_search",
+        "video_list_moments",
+        "video_get_code",
+        "video_get_frame",
+    ):
+        assert tools[name].annotations is not None
+        assert tools[name].annotations.readOnlyHint is True
+        assert tools[name].annotations.idempotentHint is True
     assert tools["video_get_code"].output_schema is not None
 
     ingest_schema = tools["video_ingest"].parameters["properties"]["max_duration_s"]
@@ -243,8 +280,9 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert {"moment_id", "t"} <= frame_properties.keys()
     assert {"moment_id", "t"}.isdisjoint(frame_required)
     assert frame_properties["quality"]["default"] == "auto"
-    assert "attached image block directly and stop" in frame_tool.description
-    assert "never reopen the source in a browser" in frame_tool.description
+    assert "paste render_markdown verbatim and stop" in frame_tool.description
+    assert "never use a browser, shell" in frame_tool.description
+    assert "permission request" in frame_tool.description
     assert frame_tool.parameters["$defs"]["FrameQuality"]["enum"] == [
         "auto",
         "probe",
@@ -264,8 +302,13 @@ def test_exact_tool_surface_and_annotations() -> None:
         "evidence_quality",
         "width",
         "height",
+        "render_path",
+        "render_markdown",
+        "render_expires_at",
     ):
         assert field in frame_tool.output_schema["properties"]
+    code_output = tools["video_get_code"].output_schema["properties"]
+    assert {"render_path", "render_markdown", "render_expires_at"} <= code_output.keys()
     search_hit_schema = tools["video_search"].output_schema["$defs"]["SearchHit"]
     assert "video_get_frame" in search_hit_schema["properties"]["moment_id"]["description"]
     for name in ("video_get_transcript", "video_search", "video_list_moments"):
@@ -386,6 +429,10 @@ async def test_visual_tool_returns_text_image_and_structured_content() -> None:
     assert [block.type for block in result.content] == ["text", "image"]
     assert result.structuredContent is not None
     assert result.structuredContent["code"] == "print('hello')"
+    assert result.structuredContent["render_path"].endswith("frame.jpg")
+    image_blocks = [block for block in result.content if isinstance(block, ImageContent)]
+    assert len(image_blocks) == 1
+    assert base64.b64decode(image_blocks[0].data) == b"image"
 
 
 @pytest.mark.asyncio
@@ -411,6 +458,32 @@ async def test_frame_tool_accepts_exact_moment_and_returns_structured_ocr() -> N
     assert result.structuredContent["evidence_quality"] == FrameEvidenceQuality.RETAINED.value
     assert result.structuredContent["width"] == 320
     assert result.structuredContent["height"] == 180
+    assert result.structuredContent["render_path"].endswith("frame.jpg")
+    assert result.structuredContent["render_markdown"].startswith("![Keyframe frame")
+    image_blocks = [block for block in result.content if isinstance(block, ImageContent)]
+    assert len(image_blocks) == 1
+    assert base64.b64decode(image_blocks[0].data) == b"image"
+
+
+@pytest.mark.asyncio
+async def test_remote_frame_fallback_never_requests_local_workspace_roots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def forbidden_roots(_ctx: object) -> tuple[Path, ...]:
+        raise AssertionError("remote frame retrieval must not ask for local roots")
+
+    monkeypatch.setattr(server_module, "_client_roots", forbidden_roots)
+    server = create_server(RemoteUncoveredFrameService())
+
+    result = await server._tool_manager.call_tool(
+        "video_get_frame",
+        {"video_id": "remote-demo", "t": 30.0, "quality": "auto"},
+        convert_result=True,
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.structuredContent is not None
+    assert result.structuredContent["requested_t_covered"] is False
 
 
 @pytest.mark.parametrize(

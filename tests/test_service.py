@@ -1251,6 +1251,11 @@ def test_get_code_requires_exactly_one_selector_and_rejects_non_code_moments(
     assert selected.result.requested_t is None
     assert selected.result.moment_id == moments[0].moment_id
     assert selected.image_data
+    assert Path(selected.result.render_path).read_bytes() == selected.image_data
+    assert selected.result.render_markdown == (
+        f"![Keyframe frame at 00:02](<{Path(selected.result.render_path).as_posix()}>)"
+    )
+    assert selected.result.render_expires_at.endswith("+00:00")
 
 
 def test_get_frame_round_trips_an_exact_moment_and_keeps_timestamp_compatibility(
@@ -1286,6 +1291,11 @@ def test_get_frame_round_trips_an_exact_moment_and_keeps_timestamp_compatibility
     assert exact.result.evidence_quality is FrameEvidenceQuality.RETAINED
     assert (exact.result.width, exact.result.height) == (320, 180)
     assert exact.image_data
+    assert Path(exact.result.render_path).read_bytes() == exact.image_data
+    assert exact.result.render_markdown == (
+        f"![Keyframe frame at 00:07](<{Path(exact.result.render_path).as_posix()}>)"
+    )
+    assert exact.result.render_expires_at.endswith("+00:00")
 
     timestamp = service.get_frame(ingested.video_id, t=2.0)
     assert timestamp.result.requested_moment_id is None
@@ -1346,6 +1356,10 @@ def test_frame_auto_seeks_an_authorized_local_source_for_a_probe_gap(
     assert (frame.result.width, frame.result.height) == (640, 360)
     assert frame.result.ocr_text == "targeted evidence"
     assert observed_max_edges == [MAX_IMAGE_EDGE]
+    assert Path(frame.result.render_path).read_bytes() == frame.image_data
+    assert frame.result.render_markdown == (
+        f"![Keyframe frame at 00:07](<{Path(frame.result.render_path).as_posix()}>)"
+    )
 
 
 def test_frame_probe_quality_forces_a_bounded_local_seek(

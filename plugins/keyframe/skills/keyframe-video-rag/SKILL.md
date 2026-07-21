@@ -176,32 +176,39 @@ or inspect plugin caches for additional Keyframe instructions.
 ## Verify visuals
 
 1. Call `video_get_code` with exactly one of a `moment_id` or timestamp when the
-   request needs code. Inspect both its structured text and attached crop.
+   request needs code. Inspect both its structured text and attached crop. Its
+   `render_markdown` displays the exact same encoded bytes as the MCP image.
 2. Call `video_get_frame` with exactly one of `moment_id` or `t`. Prefer the
    unchanged `moment_id` returned by shown search or moment listing for a known
    candidate. For a probe gap or exact narrated timestamp, use `t` with
    `quality="auto"`; inspect the reported `evidence_quality` and `actual_t`.
-3. Treat a request to show or share a photo, screenshot, still, or frame as
-   complete when the selected `video_get_frame` image block has been forwarded
-   through the host's image-output channel. Inspect at most two candidates,
-   forward only the selected image, then answer immediately. Never reopen the
-   source URL in a browser, click video controls, re-download media, or take a
-   browser screenshot after Keyframe returned an image. Do not create a local
-   copy unless the user explicitly asks to save or export a file.
-4. If a code-looking candidate is rejected because its heuristic kind is not
+3. Inspect at most two distinct candidates. Never retrieve the same `moment_id`
+   or timestamp twice, and never request `quality="source"` for a remote video.
+4. For a request to show or share a photo, screenshot, still, or frame, copy the
+   selected result's `render_markdown` verbatim into the response and stop. Do
+   not open a browser, use terminal or shell tools, download media, manipulate
+   playback, take a screenshot, make another copy, or request permission. The
+   private render artifact is already the exact MCP image and remains eligible
+   for reuse until `render_expires_at`, subject to earlier quota eviction.
+5. For a whole-object or overview image, use `region="full"`, never
+   `auto_crop`. Reject a likely title card when its candidate is classified as a
+   slide/diagram or its OCR is dominated by a title. Starting from the relevant
+   section anchor, retrieve the first demonstration frame about 5-10 seconds
+   later; inspect one distinct second candidate only if necessary.
+6. A vision-capable model may inspect and accurately describe the selected
+   image. A model without image input must still paste `render_markdown`, but
+   any accompanying text is limited to timestamp, provenance, and meaningful
+   text explicitly labeled `Tesseract OCR:`. It must not infer components,
+   objects, placement, layout, condition, framing, or any other visual fact.
+7. If a code-looking candidate is rejected because its heuristic kind is not
    code or terminal, call `video_get_frame` at that retained timestamp. Do not
    escalate solely because classification was wrong.
-5. Call `video_get_frame` for diagrams, slides, terminal output, UI state, or
+8. Call `video_get_frame` for diagrams, slides, terminal output, UI state, or
    any OCR result that appears incomplete or surprising.
-6. Inspect the attached image before claiming visual verification. If the host
-   says image content was omitted because the model lacks image input, never say
-   “I saw” or “the frame confirms.” Label the answer OCR-derived and corroborate
-   an exact identity with the same-window transcript plus consistent full-index
-   OCR from another adjacent moment; otherwise preserve uncertainty.
-7. Before reporting an exact identity, require one temporally local evidence
+9. Before reporting an exact identity, require one temporally local evidence
    bundle containing the spoken referent and the visual title/number/state.
    Prefer the image over reconstructed OCR when they disagree.
-8. Do not claim code parses when `parses` is `false` or `null`. Preserve
+10. Do not claim code parses when `parses` is `false` or `null`. Preserve
    uncertainty and repair only what can be justified from the frame or tests.
 
 ## Protect sensitive screens

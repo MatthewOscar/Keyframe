@@ -177,6 +177,7 @@ def test_full_local_video_rag_round_trip_and_persistent_cache(tmp_path: Path) ->
     assert 0 < len(frame_payload.image_data) <= MAX_IMAGE_BYTES
     assert frame_payload.result.requested_t == requested_t
     assert frame_payload.result.actual_t == pytest.approx(5.0, abs=1.0)
+    assert Path(frame_payload.result.render_path).read_bytes() == frame_payload.image_data
 
     restarted = KeyframeService(settings=settings)
     persisted = restarted.search(
@@ -202,7 +203,9 @@ def test_full_local_video_rag_round_trip_and_persistent_cache(tmp_path: Path) ->
     assert elapsed < 1.0
 
     assert VIDEO_PATH.is_file()
-    assert not any(settings.tmp_dir.iterdir())
+    temp_children = {path.name for path in settings.tmp_dir.iterdir()}
+    assert temp_children <= {"rendered-frames", "rendered-frames.lock"}
+    assert settings.rendered_frames_dir.is_dir()
 
 
 def test_animated_gif_visual_round_trip_skips_speech_and_caches(tmp_path: Path) -> None:
