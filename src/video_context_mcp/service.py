@@ -224,7 +224,6 @@ class KeyframeService:
                 )
                 cached_is_ready = (
                     cached is not None
-                    and cached.duration_s <= max_duration_s
                     and self._cache_satisfies(cached, selected_mode, selected_transcript_mode)
                     and self._cache_source_is_current(cached)
                 )
@@ -249,7 +248,6 @@ class KeyframeService:
                         )
                         cached_is_ready = (
                             cached is not None
-                            and cached.duration_s <= max_duration_s
                             and self._cache_satisfies(
                                 cached, selected_mode, selected_transcript_mode
                             )
@@ -351,9 +349,7 @@ class KeyframeService:
                     if proxy_warning is not None:
                         existing = existing.model_copy(
                             update={
-                                "warnings": _unique_strings(
-                                    (*existing.warnings, proxy_warning)
-                                )
+                                "warnings": _unique_strings((*existing.warnings, proxy_warning))
                             }
                         )
                         with timings.measure("cache_lookup_s"):
@@ -636,7 +632,7 @@ class KeyframeService:
                 segment
                 for segment in compact_segments
                 if (start_s is None or segment.end_s > start_s)
-                and (end_s is None or segment.start_s <= end_s)
+                and (end_s is None or segment.start_s < end_s)
             ]
             segments = compact_segments[offset : offset + limit]
             has_more = offset + len(segments) < len(compact_segments)
@@ -894,9 +890,8 @@ class KeyframeService:
             )
 
         target_t = moment.actual_t if t is None and moment is not None else t
-        retained_covers_request = (
-            moment is not None
-            and (t is None or moment.start_s <= t <= moment.end_s)
+        retained_covers_request = moment is not None and (
+            t is None or moment.start_s <= t <= moment.end_s
         )
         should_seek = selected_quality is not FrameQuality.AUTO or not retained_covers_request
         if should_seek and target_t is not None:
@@ -1232,9 +1227,7 @@ class KeyframeService:
                             frame_path=str(
                                 (final_run / frame_name).relative_to(self.settings.home)
                             ),
-                            crop_path=str(
-                                (final_run / crop_name).relative_to(self.settings.home)
-                            ),
+                            crop_path=str((final_run / crop_name).relative_to(self.settings.home)),
                         )
                     )
                 os.replace(staged_run, final_run)

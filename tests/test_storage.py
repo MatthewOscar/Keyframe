@@ -160,6 +160,156 @@ def test_search_broadens_only_when_all_terms_have_no_scoped_match(
     assert first_page[0].segment_id != second_page[0].segment_id
 
 
+def test_said_search_adds_deoverlapped_rolling_caption_context(
+    store: KeyframeStore,
+) -> None:
+    segments = [
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:10",
+            start_s=10,
+            end_s=12,
+            text="with that done it's time to",
+            source="automatic_captions",
+        ),
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:11",
+            start_s=11,
+            end_s=13,
+            text="it's time to screw the board down now",
+            source="automatic_captions",
+        ),
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:12",
+            start_s=12.5,
+            end_s=15,
+            text="the board down now each case differs",
+            source="automatic_captions",
+        ),
+    ]
+    video = sample_video().model_copy(update={"duration_s": 20})
+    store.save_video(video, segments, [sample_moment()])
+
+    hits, has_more = store.search(
+        "board",
+        video_id=video.video_id,
+        channel=SearchChannel.SAID,
+        start_s=10,
+        end_s=16,
+        offset=0,
+        limit=10,
+    )
+
+    assert has_more is False
+    assert hits
+    assert {hit.context for hit in hits} == {
+        "with that done it's time to screw the board down now each case differs"
+    }
+
+
+def test_said_search_context_deoverlaps_boundary_bridged_youtube_cues(
+    store: KeyframeStore,
+) -> None:
+    segments = [
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:20",
+            start_s=10,
+            end_s=12,
+            text="do not fully tighten\nleaving a little slack",
+            source="automatic_captions",
+        ),
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:21",
+            start_s=12,
+            end_s=12.01,
+            text="leaving a little slack",
+            source="automatic_captions",
+        ),
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:22",
+            start_s=12.01,
+            end_s=14,
+            text="leaving a little slack\nmotherboard as you are putting it in",
+            source="automatic_captions",
+        ),
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:23",
+            start_s=14,
+            end_s=14.01,
+            text="motherboard as you are putting it in",
+            source="automatic_captions",
+        ),
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:24",
+            start_s=14.01,
+            end_s=16,
+            text="motherboard as you are putting it in\nadd the rest of the screws",
+            source="automatic_captions",
+        ),
+    ]
+    video = sample_video().model_copy(update={"duration_s": 20})
+    store.save_video(video, segments, [sample_moment()])
+
+    hits, _has_more = store.search(
+        "motherboard",
+        video_id=video.video_id,
+        channel=SearchChannel.SAID,
+        start_s=10,
+        end_s=17,
+        offset=0,
+        limit=10,
+    )
+
+    assert hits
+    for hit in hits:
+        assert hit.context is not None
+        assert hit.context.count("leaving a little slack") == 1
+        assert hit.context.count("motherboard as you are putting it in") == 1
+        assert hit.context.count("add the rest of the screws") == 1
+
+
+def test_said_search_context_stays_inside_caller_time_bounds(
+    store: KeyframeStore,
+) -> None:
+    segments = [
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:30",
+            start_s=7,
+            end_s=10,
+            text="previous chapter secret",
+            source="captions",
+        ),
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:31",
+            start_s=10,
+            end_s=12,
+            text="board installation begins",
+            source="captions",
+        ),
+        TranscriptSegment(
+            segment_id="file_deadbeef:s:32",
+            start_s=12,
+            end_s=15,
+            text="next chapter cable routing",
+            source="captions",
+        ),
+    ]
+    video = sample_video().model_copy(update={"duration_s": 20})
+    store.save_video(video, segments, [sample_moment()])
+
+    hits, _has_more = store.search(
+        "board",
+        video_id=video.video_id,
+        channel=SearchChannel.SAID,
+        start_s=10,
+        end_s=12,
+        offset=0,
+        limit=10,
+    )
+
+    assert len(hits) == 1
+    assert hits[0].context == "board installation begins"
+
+
 @pytest.mark.parametrize(
     ("coverage", "indexed_mode"),
     (
@@ -398,6 +548,37 @@ def test_pages_and_nearest_moment(store: KeyframeStore) -> None:
     assert nearest == sample_moment()
 
 
+def test_transcript_time_bounds_are_half_open(store: KeyframeStore) -> None:
+    early = sample_segment()
+    late = early.model_copy(
+        update={
+            "segment_id": "file_deadbeef:s:1",
+            "start_s": 3,
+            "end_s": 5,
+            "text": "later chapter evidence",
+        }
+    )
+    store.save_video(sample_video(), [early, late], [sample_moment()])
+
+    before, before_more = store.transcript_page(
+        sample_video().video_id,
+        start_s=None,
+        end_s=3,
+        offset=0,
+        limit=10,
+    )
+    after, after_more = store.transcript_page(
+        sample_video().video_id,
+        start_s=3,
+        end_s=None,
+        offset=0,
+        limit=10,
+    )
+
+    assert before == [early] and before_more is False
+    assert after == [late] and after_more is False
+
+
 def test_visual_time_bounds_exclude_disjoint_moments_and_search_hits(
     store: KeyframeStore,
 ) -> None:
@@ -406,9 +587,9 @@ def test_visual_time_bounds_exclude_disjoint_moments_and_search_hits(
         update={
             "moment_id": "file_deadbeef:m:1",
             "actual_t": 9,
-            "start_s": 8,
+            "start_s": 7,
             "end_s": 10,
-            "stable_seconds": 2,
+            "stable_seconds": 3,
             "ocr_text": "except ValueError in the later example",
             "code": "except ValueError:\n    pass",
         }
@@ -419,14 +600,14 @@ def test_visual_time_bounds_exclude_disjoint_moments_and_search_hits(
         sample_video().video_id,
         kind=MomentKind.ANY,
         start_s=None,
-        end_s=7.5,
+        end_s=7,
         offset=0,
         limit=10,
     )
     late_page, late_more = store.moment_page(
         sample_video().video_id,
         kind=MomentKind.ANY,
-        start_s=7.5,
+        start_s=7,
         end_s=None,
         offset=0,
         limit=10,
@@ -439,7 +620,7 @@ def test_visual_time_bounds_exclude_disjoint_moments_and_search_hits(
         video_id=sample_video().video_id,
         channel=SearchChannel.SHOWN,
         start_s=None,
-        end_s=7.5,
+        end_s=7,
         offset=0,
         limit=10,
     )
@@ -447,7 +628,7 @@ def test_visual_time_bounds_exclude_disjoint_moments_and_search_hits(
         "ValueError",
         video_id=sample_video().video_id,
         channel=SearchChannel.SHOWN,
-        start_s=7.5,
+        start_s=7,
         end_s=None,
         offset=0,
         limit=10,
@@ -456,6 +637,78 @@ def test_visual_time_bounds_exclude_disjoint_moments_and_search_hits(
     assert [hit.moment_id for hit in late_hits] == [late.moment_id]
     assert early_hits_more is False
     assert late_hits_more is False
+
+
+def test_half_open_bounds_include_zero_duration_evidence_at_start_only(
+    store: KeyframeStore,
+) -> None:
+    point_segment = sample_segment().model_copy(
+        update={
+            "segment_id": "file_deadbeef:s:point",
+            "start_s": 3,
+            "end_s": 3,
+            "text": "point transcript marker",
+        }
+    )
+    point_moment = sample_moment().model_copy(
+        update={
+            "moment_id": "file_deadbeef:m:point",
+            "actual_t": 3,
+            "start_s": 3,
+            "end_s": 3,
+            "stable_seconds": 0,
+            "ocr_text": "point visual marker",
+        }
+    )
+    store.save_video(sample_video(), [point_segment], [point_moment])
+
+    transcript_at_start, _ = store.transcript_page(
+        sample_video().video_id, start_s=3, end_s=4, offset=0, limit=10
+    )
+    transcript_at_end, _ = store.transcript_page(
+        sample_video().video_id, start_s=2, end_s=3, offset=0, limit=10
+    )
+    moments_at_start, _ = store.moment_page(
+        sample_video().video_id,
+        kind=MomentKind.ANY,
+        start_s=3,
+        end_s=4,
+        offset=0,
+        limit=10,
+    )
+    moments_at_end, _ = store.moment_page(
+        sample_video().video_id,
+        kind=MomentKind.ANY,
+        start_s=2,
+        end_s=3,
+        offset=0,
+        limit=10,
+    )
+    hits_at_start, _ = store.search(
+        "point visual",
+        video_id=sample_video().video_id,
+        channel=SearchChannel.SHOWN,
+        start_s=3,
+        end_s=4,
+        offset=0,
+        limit=10,
+    )
+    hits_at_end, _ = store.search(
+        "point visual",
+        video_id=sample_video().video_id,
+        channel=SearchChannel.SHOWN,
+        start_s=2,
+        end_s=3,
+        offset=0,
+        limit=10,
+    )
+
+    assert transcript_at_start == [point_segment]
+    assert transcript_at_end == []
+    assert moments_at_start == [point_moment]
+    assert moments_at_end == []
+    assert [hit.moment_id for hit in hits_at_start] == [point_moment.moment_id]
+    assert hits_at_end == []
 
 
 def test_empty_search_query_is_rejected(store: KeyframeStore) -> None:

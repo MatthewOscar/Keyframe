@@ -274,13 +274,23 @@ def test_exact_tool_surface_and_annotations() -> None:
             assert properties[bound]["default"] is None
             assert properties[bound]["anyOf"][0]["minimum"] == 0
             assert bound not in required
+        assert "half-open temporal window" in properties["start_s"]["description"]
+        assert "Inclusive start" in properties["start_s"]["description"]
+        assert "Exclusive end" in properties["end_s"]["description"]
+    assert "channel='all', never 'both'" in tools["video_search"].description
+    assert "coherent nearby context" in tools["video_search"].description
+    assert "make this the only search" in tools["video_search"].description
+    assert "do not list moments" in tools["video_search"].description
+    assert "including in progress updates before this call" in tools["video_get_frame"].description
     frame_tool = tools["video_get_frame"]
     frame_properties = frame_tool.parameters["properties"]
     frame_required = set(frame_tool.parameters["required"])
     assert {"moment_id", "t"} <= frame_properties.keys()
     assert {"moment_id", "t"}.isdisjoint(frame_required)
     assert frame_properties["quality"]["default"] == "auto"
-    assert "paste render_markdown verbatim and stop" in frame_tool.description
+    assert "copy render_markdown byte-for-byte" in frame_tool.description
+    assert "angle-bracket destination delimiters" in frame_tool.description
+    assert "exactly one action-aligned frame" in frame_tool.description
     assert "never use a browser, shell" in frame_tool.description
     assert "permission request" in frame_tool.description
     assert frame_tool.parameters["$defs"]["FrameQuality"]["enum"] == [
@@ -308,8 +318,15 @@ def test_exact_tool_surface_and_annotations() -> None:
     ):
         assert field in frame_tool.output_schema["properties"]
     code_output = tools["video_get_code"].output_schema["properties"]
+    assert "use video_get_frame for a general" in tools["video_get_code"].description
+    assert "Markdown byte-for-byte" in tools["video_get_code"].description
     assert {"render_path", "render_markdown", "render_expires_at"} <= code_output.keys()
     search_hit_schema = tools["video_search"].output_schema["$defs"]["SearchHit"]
+    assert "context" in search_hit_schema["properties"]
+    assert (
+        "announcement from action in progress"
+        in search_hit_schema["properties"]["context"]["description"]
+    )
     assert "video_get_frame" in search_hit_schema["properties"]["moment_id"]["description"]
     for name in ("video_get_transcript", "video_search", "video_list_moments"):
         cursor_schema = tools[name].parameters["properties"]["cursor"]

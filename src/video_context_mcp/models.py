@@ -266,6 +266,14 @@ class SearchHit(StrictModel):
     end_s: float
     channel: SearchChannel
     snippet: str
+    context: str | None = Field(
+        default=None,
+        description=(
+            "Coherent nearby speech with rolling-caption overlap removed for said hits; null "
+            "for shown OCR hits. Use this to distinguish an action announcement from action in "
+            "progress."
+        ),
+    )
     score: float
     segment_id: str | None = None
     moment_id: str | None = Field(

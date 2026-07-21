@@ -25,7 +25,10 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 
 - [ ] Matthew independently writes every Devpost submission field; do not paste
       AI-generated prose from `docs/devpost-submission.md`.
-- [ ] Review the complete v0.2.2 diff, commit it to `main`, and confirm CI.
+- [x] Review the complete v0.2.2 diff, commit it to `main`, and confirm CI.
+- [x] Review the complete v0.2.3 corrective diff and pass the local release
+      gate.
+- [ ] Commit and push v0.2.3 to `main`, then confirm the full CI matrix.
 - [x] Create and push immutable tag `v0.1.0`.
 - [x] Create and push the verified agent-efficiency release tag `v0.1.3`.
 - [x] Create the PyPI project, configure Trusted Publishing, and publish the
@@ -36,8 +39,10 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
       confirm its PyPI and GitHub releases complete successfully.
 - [x] Create and push the Windows/frame-sharing patch release tag `v0.2.1`,
       then confirm its PyPI and GitHub releases complete successfully.
-- [ ] Create and push the reliable inline-rendering release tag `v0.2.2`,
+- [x] Create and push the reliable inline-rendering release tag `v0.2.2`,
       then confirm its PyPI and GitHub releases complete successfully.
+- [ ] Create and push the corrective inline-frame-selection release tag
+      `v0.2.3`, then confirm its PyPI and GitHub releases complete successfully.
 - [ ] Install the tagged plugin in Codex and ChatGPT desktop and run the
       headline flow with Codex visibly configured to `gpt-5.6`.
 - [ ] Smoke-install the tagged release in Claude Code, Cursor, and Agy; approve

@@ -242,15 +242,22 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "Do not fan transcript pages or windows out to multiple agents" in contents[0]
     assert "count Keyframe calls" in contents[0]
     assert "copy the" in contents[0]
-    assert "`render_markdown` verbatim" in contents[0]
+    assert "`render_markdown` byte-for-byte" in contents[0]
+    assert "including its `<` and `>` destination delimiters" in contents[0]
     assert "not open a browser, use terminal or shell tools" in contents[0]
     assert "Never retrieve the same `moment_id`" in contents[0]
     assert 'never request `quality="source"` for a remote video' in contents[0]
     assert 'use `region="full"`, never' in contents[0]
-    assert "about 5-10 seconds" in contents[0]
-    assert "A model without image input must still paste" in contents[0]
-    assert "It must not infer components" in contents[0]
-    assert "Copy it byte-for-byte" in contents[0]
+    assert "Align a whole-object frame to the demonstrated action" in contents[0]
+    assert "announcement timestamp as visual proof" in contents[0]
+    assert "`video_get_frame` is the only visual retrieval tool" in contents[0]
+    assert "Use `context` to distinguish an action" in contents[0]
+    assert "prohibitions apply at every phase" in contents[0]
+    assert "never test a source URL or path in downstream tools" in contents[0]
+    assert "exactly one frame call" in contents[0]
+    assert "without image input cannot evaluate candidates" in contents[0]
+    assert "must not call the frame clear, clean, best, representative" in contents[0]
+    assert "Omit OCR when it is low-confidence or not meaningful" in contents[0]
     assert "Open this skill only through the exact host-provided locator" in contents[0]
     assert "do not search for another copy" in contents[0]
     assert "Copy the returned structured `video_id` byte-for-byte" in contents[0]
@@ -259,7 +266,7 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "Pass that episode's `start_s`/`end_s`" in contents[0]
     assert "never join an ID or" in contents[0]
     assert "`requested_t_covered`" in contents[0]
-    assert "explicitly labeled `Tesseract OCR:`" in contents[0]
+    assert "`Tesseract OCR:`" in contents[0]
     assert "temporally local evidence" in contents[0]
     server_source = (ROOT / "src/video_context_mcp/server.py").read_text(encoding="utf-8")
     assert "Ingest each source with mode='fast' once" in server_source
@@ -271,12 +278,24 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "Never select a higher-ranked OCR hit from another interval" in server_source
     assert "view='compact'" in server_source
     assert "quality='auto' before upgrading" in server_source
-    assert "copy render_markdown verbatim" in server_source
-    assert "must not infer objects, layout, condition, or framing" in server_source
+    assert "copy render_markdown byte-for-byte" in server_source
+    assert "video_get_frame is the only visual retrieval tool" in server_source
+    assert "SHOW/SHARE FRAME FAST PATH" in server_source
+    assert "do not test the URL in downstream tools" in server_source
+    assert "channel='all', never 'both'" in server_source
+    assert "coherent nearby context" in server_source
+    assert "one said search inside the exact unpadded" in server_source
+    assert "Never list moments, run another" in server_source
+    assert "omit low-confidence or meaningless OCR" in server_source
+    assert "never judge frame quality" in server_source
+    assert "including in progress updates before the frame call" in server_source
+    assert "do not echo those adjectives from the user" in server_source
+    assert "never infer objects, layout, condition, or framing" in server_source
 
 
 def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
     suite = _load(ROOT / "evals" / "mac-plugin-cases.json")
+    assert "MOTHERBOARD_VIDEO_ID" not in suite["variables"]
     cases = {case["id"]: case for case in suite["cases"]}
     no_vision = cases["desktop-share-frame-directly"]
     forward = cases["desktop-share-frame-forward-vision"]
@@ -285,12 +304,16 @@ def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
     no_vision_criteria = " ".join(no_vision["success_criteria"])
     for requirement in (
         "under 30 seconds",
-        "at most two distinct",
-        "render_markdown verbatim",
+        "exactly once",
+        "render_markdown byte-for-byte",
+        "angle-bracket destination delimiters",
         "sole MCP image block bytes",
         "no browser, shell, terminal, web-download",
         "Never requests quality=source",
         "Tesseract OCR",
+        "visual-quality claim",
+        "exactly one cache-hit video_ingest",
+        "between 4725 and 4741 seconds",
     ):
         assert requirement in no_vision_criteria
 
@@ -298,3 +321,5 @@ def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
     forward_criteria = " ".join(forward["success_criteria"])
     assert "description is based on image inspection" in forward_criteria
     assert "matches the displayed frame" in forward_criteria
+    assert "between 4719 and 4741 seconds" in forward_criteria
+    assert "render_markdown byte-for-byte" in forward_criteria

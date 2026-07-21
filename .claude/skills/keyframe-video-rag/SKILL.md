@@ -111,8 +111,13 @@ or inspect plugin caches for additional Keyframe instructions.
 1. For a targeted question, call `video_search` before requesting long
    transcripts or many moments. Skip generic search for a whole-video summary;
    use the dedicated flow below.
-2. Search `said` for spoken explanations, `shown` for screen content, and both
-   when the request connects narration with a visual demonstration.
+2. Search `channel="said"` for spoken explanations, `channel="shown"` for
+   screen content, and `channel="all"` when the request connects narration with
+   a visual demonstration. The literal combined enum is `all`, never `both`.
+   Each said hit includes a compact `snippet` plus coherent nearby `context`
+   with rolling-caption overlap removed. Use `context` to distinguish an action
+   announcement from action in progress; do not decide from a 0.01-second
+   snippet alone.
 3. For a referential identity question such as “which issue did they fix,” first
    find the spoken/deictic anchor, then retrieve its bounded transcript window.
    Pass that episode's `start_s`/`end_s` to shown search or moment listing.
@@ -185,30 +190,72 @@ or inspect plugin caches for additional Keyframe instructions.
 3. Inspect at most two distinct candidates. Never retrieve the same `moment_id`
    or timestamp twice, and never request `quality="source"` for a remote video.
 4. For a request to show or share a photo, screenshot, still, or frame, copy the
-   selected result's `render_markdown` verbatim into the response and stop. Do
+   selected result's `render_markdown` byte-for-byte into the response,
+   including its `<` and `>` destination delimiters, and stop. Do not retype,
+   reconstruct, normalize, or reformat that Markdown. Do
    not open a browser, use terminal or shell tools, download media, manipulate
    playback, take a screenshot, make another copy, or request permission. The
    private render artifact is already the exact MCP image and remains eligible
    for reuse until `render_expires_at`, subject to earlier quota eviction.
+   These prohibitions apply at every phase of the show/share task, including
+   before the frame is selected. If the conversation has no exact `video_id`
+   receipt, call `video_ingest` once and copy its returned ID byte-for-byte;
+   never test a source URL or path in downstream tools.
+   `video_get_frame` is the only visual retrieval tool for a general photo or
+   frame request. Never call `video_get_code` for one; that tool accepts only
+   code/terminal moments and cannot retrieve a general image.
 5. For a whole-object or overview image, use `region="full"`, never
-   `auto_crop`. Reject a likely title card when its candidate is classified as a
-   slide/diagram or its OCR is dominated by a title. Starting from the relevant
-   section anchor, retrieve the first demonstration frame about 5-10 seconds
-   later; inspect one distinct second candidate only if necessary.
-6. A vision-capable model may inspect and accurately describe the selected
-   image. A model without image input must still paste `render_markdown`, but
-   any accompanying text is limited to timestamp, provenance, and meaningful
-   text explicitly labeled `Tesseract OCR:`. It must not infer components,
-   objects, placement, layout, condition, framing, or any other visual fact.
-7. If a code-looking candidate is rejected because its heuristic kind is not
+   `auto_crop`. Reject a likely title card when its OCR is title-dominant, or
+   when a slide/diagram classification is corroborated by title-like OCR. Kind
+   is heuristic: do not reject a low-confidence slide/diagram label by itself,
+   because camera shots of hardware and UI are sometimes misclassified.
+6. Align a whole-object frame to the demonstrated action, not merely to the
+   section title or a spoken announcement. Keep search, transcript, moment, and
+   frame candidates inside the exact descriptive chapter bounds when they are
+   known; do not widen into the preceding or following chapter. Search
+   `channel="said"` with the user's object and physical-action terms first. If
+   that multi-term query has no spoken hit, broaden once to the object noun in
+   `said` or retrieve one bounded transcript interval for that section. Prefer
+   a timestamp whose narration says the action is in progress or just completed
+   (for example placing, attaching, aligning, or putting in) over an earlier
+   transition such as "next", "now", or "it's time to". Tutorial narration often
+   announces an action before an explanatory detour, so never use that
+   announcement timestamp as visual proof. Use an approximately eight-second
+   post-anchor fallback only when no action-aligned hit exists.
+   For a no-vision show/share request about an action in a spoken tutorial, use
+   a strict call sequence: one ingest when no exact receipt is present (a cache
+   hit for an already indexed source), one `said` search inside the exact
+   unpadded chapter bounds, then one frame call. From that first search, choose
+   the first hit whose `context` describes the action in progress or completed.
+   When one exists, do not call `video_list_moments`, search again, or select or
+   re-search a transition phrase such as "next", "now", or "time to"; proceed
+   directly to `video_get_frame` at the qualifying hit.
+7. A vision-capable model may inspect and accurately describe the selected
+   image and may inspect one distinct second candidate if necessary. A model
+   without image input cannot evaluate candidates: finish timestamp selection
+   from transcript/search evidence before calling `video_get_frame`, make
+   exactly one frame call, then paste that call's `render_markdown` immediately
+   and stop. Never retrieve a frame merely to test whether it looks right, and
+   never paste Markdown saved from an earlier candidate. Before or after that
+   call, never promise or claim that a candidate is clear, high-confidence, or
+   visibly shows anything; this applies to progress updates as well as the final
+   answer. Never use visual-quality words such as `clear`, `clean`, `best`,
+   `representative`, or `high-confidence` in any intent, progress, or final
+   message, and do not echo those adjectives from the user. Any accompanying text
+   is limited to timestamp, provenance, and meaningful text explicitly labeled
+   `Tesseract OCR:`. Omit OCR when it is low-confidence or not meaningful. It
+   must not call the frame clear, clean, best, representative, or otherwise
+   judge its visual quality, and must not infer components, objects, placement,
+   layout, condition, framing, or any other visual fact.
+8. If a code-looking candidate is rejected because its heuristic kind is not
    code or terminal, call `video_get_frame` at that retained timestamp. Do not
    escalate solely because classification was wrong.
-8. Call `video_get_frame` for diagrams, slides, terminal output, UI state, or
+9. Call `video_get_frame` for diagrams, slides, terminal output, UI state, or
    any OCR result that appears incomplete or surprising.
-9. Before reporting an exact identity, require one temporally local evidence
+10. Before reporting an exact identity, require one temporally local evidence
    bundle containing the spoken referent and the visual title/number/state.
    Prefer the image over reconstructed OCR when they disagree.
-10. Do not claim code parses when `parses` is `false` or `null`. Preserve
+11. Do not claim code parses when `parses` is `false` or `null`. Preserve
    uncertainty and repair only what can be justified from the frame or tests.
 
 ## Protect sensitive screens

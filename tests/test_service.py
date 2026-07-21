@@ -300,6 +300,32 @@ def test_local_cache_identity_reuses_unchanged_source_and_hashes_changed_file(
     assert len(calls) == 2
 
 
+def test_ready_cache_bypasses_processing_duration_guard(tmp_path: Path) -> None:
+    settings, source_root = _settings(tmp_path)
+    source = _source_file(source_root)
+    acquire, calls = _fake_acquirer(duration_s=3_600)
+    service = _service(settings, acquire)
+
+    first = service.ingest(
+        str(source),
+        mode=IngestMode.FAST,
+        transcript_mode=TranscriptMode.CAPTIONS,
+        max_duration_s=3_600,
+    )
+    cached = service.ingest(
+        str(source),
+        mode=IngestMode.FAST,
+        transcript_mode=TranscriptMode.CAPTIONS,
+        max_duration_s=1_800,
+    )
+
+    assert first.cache_hit is False
+    assert cached.cache_hit is True
+    assert cached.video_id == first.video_id
+    assert cached.duration_s == 3_600
+    assert calls == [str(source)]
+
+
 def test_post_lock_cache_race_reports_only_lookup_timing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

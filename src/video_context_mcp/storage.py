@@ -23,7 +23,12 @@ from video_context_mcp.models import (
 
 SCHEMA_VERSION = 5
 _TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
+_TOKEN_EDGE_RE = re.compile(r"^[^\w]+|[^\w]+$", re.UNICODE)
 _LOCAL_VIDEO_ID_RE = re.compile(r"local-[0-9a-f]{16}\Z")
+_SEARCH_SPEECH_CONTEXT_SECONDS = 4.0
+_SEARCH_SPEECH_CONTEXT_CHARS = 480
+_ROLLING_CAPTION_BOUNDARY_EPSILON_SECONDS = 0.02
+_ROLLING_CAPTION_BRIDGE_MAX_SECONDS = 0.05
 
 
 class KeyframeStore:
@@ -180,9 +185,7 @@ class KeyframeStore:
             row["name"] for row in connection.execute("PRAGMA table_info(videos)").fetchall()
         }
         if "has_audio" not in video_columns:
-            connection.execute(
-                "ALTER TABLE videos ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 1"
-            )
+            connection.execute("ALTER TABLE videos ADD COLUMN has_audio INTEGER NOT NULL DEFAULT 1")
         connection.execute(
             "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
             ("5",),
@@ -517,10 +520,10 @@ class KeyframeStore:
         clauses = ["video_id = ?"]
         values: list[object] = [video_id]
         if start_s is not None:
-            clauses.append("end_s >= ?")
-            values.append(start_s)
+            clauses.append("(end_s > ? OR (end_s = start_s AND start_s >= ?))")
+            values.extend((start_s, start_s))
         if end_s is not None:
-            clauses.append("start_s <= ?")
+            clauses.append("start_s < ?")
             values.append(end_s)
         values.extend([limit + 1, offset])
         with self.connect() as connection:
@@ -549,10 +552,10 @@ class KeyframeStore:
             clauses.append("kind = ?")
             values.append(kind.value)
         if start_s is not None:
-            clauses.append("end_s >= ?")
-            values.append(start_s)
+            clauses.append("(end_s > ? OR (end_s = start_s AND start_s >= ?))")
+            values.extend((start_s, start_s))
         if end_s is not None:
-            clauses.append("start_s <= ?")
+            clauses.append("start_s < ?")
             values.append(end_s)
         values.extend([limit + 1, offset])
         with self.connect() as connection:
@@ -585,10 +588,12 @@ class KeyframeStore:
             filters.append("content.channel = ?")
             filter_values.append(channel.value)
         if start_s is not None:
-            filters.append("content.end_s >= ?")
-            filter_values.append(start_s)
+            filters.append(
+                "(content.end_s > ? OR (content.end_s = content.start_s AND content.start_s >= ?))"
+            )
+            filter_values.extend((start_s, start_s))
         if end_s is not None:
-            filters.append("content.start_s <= ?")
+            filters.append("content.start_s < ?")
             filter_values.append(end_s)
         with self.connect() as connection:
             match_query = strict_query
@@ -617,6 +622,18 @@ class KeyframeStore:
                 """,
                 values,
             ).fetchall()
+            speech_contexts = {
+                row["id"]: _speech_context(
+                    connection,
+                    video_id=row["video_id"],
+                    start_s=row["start_s"],
+                    end_s=row["end_s"],
+                    query_start_s=start_s,
+                    query_end_s=end_s,
+                )
+                for row in rows[:limit]
+                if SearchChannel(row["channel"]) is SearchChannel.SAID
+            }
         has_more = len(rows) > limit
         hits = []
         for row in rows[:limit]:
@@ -628,6 +645,7 @@ class KeyframeStore:
                     end_s=row["end_s"],
                     channel=row_channel,
                     snippet=row["snippet"],
+                    context=speech_contexts.get(row["id"]),
                     score=round(-float(row["rank"]), 8),
                     segment_id=row["ref_id"] if row_channel is SearchChannel.SAID else None,
                     moment_id=row["ref_id"] if row_channel is SearchChannel.SHOWN else None,
@@ -776,6 +794,123 @@ class KeyframeStore:
             frame_path=row["frame_path"],
             crop_path=row["crop_path"],
         )
+
+
+def _speech_context(
+    connection: sqlite3.Connection,
+    *,
+    video_id: str,
+    start_s: float,
+    end_s: float,
+    query_start_s: float | None,
+    query_end_s: float | None,
+) -> str | None:
+    """Return a short, readable speech window around one FTS cue.
+
+    YouTube automatic captions frequently index a complete rolling cue followed
+    by 0.01-second continuation fragments. BM25 correctly finds the cue, but the
+    fragment alone is too little evidence to tell an action announcement from
+    action in progress. This window de-overlaps adjacent automatic cues while
+    leaving manual captions and Whisper text unchanged.
+    """
+
+    window_start = max(
+        0.0,
+        start_s - _SEARCH_SPEECH_CONTEXT_SECONDS,
+        query_start_s if query_start_s is not None else 0.0,
+    )
+    window_end = max(end_s, start_s) + _SEARCH_SPEECH_CONTEXT_SECONDS
+    if query_end_s is not None:
+        window_end = min(window_end, query_end_s)
+    if window_end <= window_start:
+        return None
+    rows = connection.execute(
+        """SELECT start_s, end_s, text, source
+        FROM transcript_segments
+        WHERE video_id = ?
+          AND (end_s > ? OR (end_s = start_s AND start_s >= ?))
+          AND start_s < ?
+        ORDER BY start_s, segment_id""",
+        (video_id, window_start, window_start, window_end),
+    ).fetchall()
+    if not rows:
+        return None
+
+    merged: list[str] = []
+    previous_tokens: list[str] = []
+    previous_start_s = -1.0
+    previous_end_s = -1.0
+    previous_source = ""
+    previous_text = ""
+    for row in rows:
+        text = str(row["text"])
+        tokens = text.split()
+        if not tokens:
+            continue
+        overlap = 0
+        source = str(row["source"])
+        if (
+            source == "automatic_captions"
+            and previous_source == "automatic_captions"
+            and _is_rolling_caption_pair(
+                previous_start_s=previous_start_s,
+                previous_end_s=previous_end_s,
+                previous_text=previous_text,
+                current_start_s=float(row["start_s"]),
+                current_end_s=float(row["end_s"]),
+                current_text=text,
+            )
+        ):
+            overlap = _caption_token_overlap(previous_tokens, tokens)
+        merged.extend(tokens[overlap:])
+        previous_tokens = tokens
+        previous_start_s = float(row["start_s"])
+        previous_end_s = float(row["end_s"])
+        previous_source = source
+        previous_text = text
+
+    context = " ".join(merged).strip()
+    if not context:
+        return None
+    if len(context) <= _SEARCH_SPEECH_CONTEXT_CHARS:
+        return context
+    return f"{context[: _SEARCH_SPEECH_CONTEXT_CHARS - 1].rstrip()}…"
+
+
+def _caption_token_overlap(previous: Sequence[str], current: Sequence[str]) -> int:
+    previous_normalized = [_normalize_caption_token(token) for token in previous]
+    current_normalized = [_normalize_caption_token(token) for token in current]
+    for length in range(min(len(previous), len(current)), 0, -1):
+        if previous_normalized[-length:] == current_normalized[:length]:
+            return length
+    return 0
+
+
+def _is_rolling_caption_pair(
+    *,
+    previous_start_s: float,
+    previous_end_s: float,
+    previous_text: str,
+    current_start_s: float,
+    current_end_s: float,
+    current_text: str,
+) -> bool:
+    if current_start_s < previous_end_s:
+        return True
+    if abs(current_start_s - previous_end_s) > _ROLLING_CAPTION_BOUNDARY_EPSILON_SECONDS:
+        return False
+    previous_duration = max(0.0, previous_end_s - previous_start_s)
+    current_duration = max(0.0, current_end_s - current_start_s)
+    return (
+        min(previous_duration, current_duration) <= _ROLLING_CAPTION_BRIDGE_MAX_SECONDS
+        or "\n" in previous_text
+        or "\n" in current_text
+    )
+
+
+def _normalize_caption_token(token: str) -> str:
+    stripped = _TOKEN_EDGE_RE.sub("", token.casefold())
+    return stripped or token.casefold()
 
 
 def _fts_queries(query: str) -> tuple[str, str]:

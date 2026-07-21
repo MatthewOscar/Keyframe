@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.2.2",
+  "suite": "keyframe-mac-plugin-v0.2.3",
   "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, reliable inline frame rendering, honest no-vision behavior, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
@@ -71,27 +71,29 @@
     {
       "id": "desktop-share-frame-directly",
       "model": "gpt-5.3-codex-spark",
-      "prompt": "Using the already indexed {{MOTHERBOARD_VIDEO}}, can you share a clear photo from the video of the demonstrated motherboard installation?",
+      "prompt": "Using Keyframe and the already indexed {{MOTHERBOARD_VIDEO}}, can you share a clear photo from the video of the demonstrated motherboard installation?",
       "success_criteria": [
-        "Reuses the existing video_id without another successful ingest",
+        "Uses exactly one cache-hit video_ingest to obtain the authoritative video_id, chapter map, and visual coverage without reprocessing media",
         "Warm-cache agent wall time is under 30 seconds",
-        "Uses region=full and quality=auto, rejects a title-card candidate, and tries the first demonstration frame about 5-10 seconds after the section anchor",
-        "Calls video_get_frame for at most two distinct candidates and never retrieves the same moment_id or timestamp twice",
-        "Pastes the selected structured render_markdown verbatim so the image renders inline from render_path",
+        "Uses region=full and quality=auto, rejects the title card and spoken action announcement, and aligns the frame to narration where motherboard installation is underway or complete",
+        "For this fixture, actual_t is between 4725 and 4741 seconds and the rendered image visibly shows the motherboard installed or being installed in the case—not the presenter, the section title, or the later front-panel-header close-up",
+        "Because Spark has no image input, finishes timestamp selection first, calls video_get_frame exactly once, and never retrieves a frame merely to test whether it looks right",
+        "Pastes the selected structured render_markdown byte-for-byte, including its angle-bracket destination delimiters, so the image renders inline from render_path",
         "The render_path bytes equal the sole MCP image block bytes",
         "Makes no browser, shell, terminal, web-download, playback, screenshot, extra-copy, or permission-request action",
         "Never requests quality=source for the remote video",
-        "Makes no unsupported component, placement, layout, condition, or framing claim; any meaningful extracted text is explicitly labeled Tesseract OCR"
+        "Makes no unsupported component, placement, layout, condition, framing, or visual-quality claim; any meaningful extracted text is explicitly labeled Tesseract OCR and low-confidence or meaningless OCR is omitted"
       ]
     },
     {
       "id": "desktop-share-frame-forward-vision",
       "model": "image-capable GPT-5.6",
-      "prompt": "Using the already indexed {{MOTHERBOARD_VIDEO}}, can you share a clear photo from the video of the demonstrated motherboard installation?",
+      "prompt": "Using Keyframe and the already indexed {{MOTHERBOARD_VIDEO}}, can you share a clear photo from the video of the demonstrated motherboard installation?",
       "success_criteria": [
-        "Reuses the existing video_id and follows the same at-most-two-distinct-frame policy",
-        "Pastes the selected render_markdown verbatim without browser, shell, download, screenshot, or permission actions",
+        "Uses exactly one cache-hit video_ingest to obtain the authoritative video_id and follows the image-capable at-most-two-distinct-frame policy",
+        "Pastes the selected render_markdown byte-for-byte, including its angle-bracket destination delimiters, without browser, shell, download, screenshot, or permission actions",
         "The image renders inline and matches the exact sole MCP image block bytes",
+        "For this fixture, actual_t is between 4719 and 4741 seconds and the displayed frame visibly shows the motherboard installed or being installed in the case",
         "Any accompanying visual description is based on image inspection and matches the displayed frame",
         "Never claims that components outside the selected frame are visible"
       ]

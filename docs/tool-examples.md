@@ -26,7 +26,9 @@ The default 1,800-second value is an explicit resource guard, not a format
 limit. If Keyframe reports a longer duration and supplies an exact
 `max_duration_s` value at or below 14,400, retry once with the same source and
 options, changing only that value. Do not split or restage the source. Ask the
-user for a shorter excerpt when the four-hour hard maximum is exceeded.
+user for a shorter excerpt when the four-hour hard maximum is exceeded. A
+ready cache entry is returned before this processing guard is applied, so a
+previously indexed long video opens in one call with the default value.
 
 Successful ingests include request-local `timings`. `total_ms` is authoritative;
 transcription and visual processing may overlap, so component values must not
@@ -51,6 +53,11 @@ Use `view="compact"` for a broad summary. It removes overlap from rolling
 automatic captions and groups speech into deterministic 60-second blocks, so a
 115-minute video normally fits in one 200-block call. Use `view="exact"` for a
 quotation or a bounded follow-up where the original cue timing matters:
+
+All `start_s`/`end_s` filters are half-open: `start_s` is inclusive and `end_s`
+is exclusive. This keeps a moment beginning at the next chapter boundary out
+of the preceding chapter while retaining zero-duration probe evidence at the
+start of a window.
 
 ```json
 {
@@ -100,6 +107,11 @@ to one video also returns its `visual_coverage` so empty probe results cannot be
 mistaken for exhaustive absence. Library-wide searches return no single
 coverage value; scope follow-up searches to one video before making any visual
 coverage or absence decision.
+
+Said hits also carry a coherent nearby `context` field with rolling automatic
+caption overlap removed. Use it to distinguish an announcement such as “it is
+time to…” from narration that describes the requested action in progress; the
+ranked `snippet` can be only 0.01 seconds long.
 
 For a referential question such as "which issue did they fix?", first locate
 the spoken anchor and read its bounded transcript context. Reuse that episode's
@@ -202,19 +214,30 @@ still appropriate for a sequence, an exhaustive visual claim, or several
 unresolved moments.
 
 For “show/share a photo” requests, paste the selected result's
-`render_markdown` verbatim and stop. Do not open a browser, invoke terminal or
-shell tools, download media, manipulate playback, take a screenshot, create a
-second copy, or request permission. Inspect at most two distinct candidates,
-never retrieve the same moment/timestamp twice, and never request
-`quality="source"` for remote video. For a whole-object or overview request,
-use `region="full"`, reject title-card candidates, and try the first
-demonstration frame about 5-10 seconds after the section anchor.
+`render_markdown` byte-for-byte, including its `<` and `>` destination
+delimiters, and stop. Do not retype, normalize, or reformat it. Do not open a
+browser, invoke terminal or shell tools, download media, manipulate playback,
+take a screenshot, create a second copy, or request permission. Inspect at most
+two distinct candidates, never retrieve the same moment/timestamp twice, and
+never request `quality="source"` for remote video. For a whole-object or overview request,
+use `region="full"` and align the candidate to narration where the requested
+action is in progress or just completed. A section title or a transition such
+as “now” or “it is time to” is routing evidence, not proof that the action is
+already visible; if only a title matches, search the object in spoken evidence
+or retrieve one bounded section transcript. Treat `kind` as heuristic and
+reject a slide/diagram as a title card only when title-like OCR corroborates it.
+Use an approximately eight-second post-anchor fallback only when no
+action-aligned timestamp exists.
 
 A model with image input may inspect and accurately describe the selected
-frame. A model without image input must still render it through
-`render_markdown`, but accompanying text is limited to timestamp, provenance,
-and meaningful text explicitly labeled `Tesseract OCR:`. OCR alone does not
-justify claims about visible objects, layout, placement, condition, or framing.
+frame and may inspect one distinct second candidate. A model without image
+input must finish action-aligned timestamp selection from text evidence first,
+make exactly one frame call, paste that call's `render_markdown` immediately,
+and stop. Its accompanying text is limited to timestamp, provenance, and
+meaningful text explicitly labeled `Tesseract OCR:`; omit low-confidence or
+meaningless OCR. OCR alone does not justify claims about visible objects,
+layout, placement, condition, or framing. A no-vision model also cannot call a
+frame clear, clean, best, representative, or otherwise judge visual quality.
 
 Rendered-frame files have a seven-day TTL and share a 256 MiB quota in the
 private Keyframe temp namespace; quota pressure can evict them earlier. Keyframe
