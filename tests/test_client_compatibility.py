@@ -220,10 +220,10 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     ]
     contents = [path.read_text(encoding="utf-8") for path in paths]
     assert contents[0] == contents[1] == contents[2]
-    assert "Use for tutorials, screen recordings" in contents[0]
-    assert "Analyze videos and animated GIFs with Keyframe MCP" in contents[0]
-    assert "narrow request only to render one source artifact" in contents[0]
-    assert "do not open this skill, promise visual quality" in contents[0]
+    assert "Use only for multi-evidence video or animated-GIF analysis" in contents[0]
+    assert "sole requested deliverable is one photo, screenshot, still, or frame" in contents[0]
+    assert "even if locating it requires ingest, search, or timestamp selection" in contents[0]
+    assert "call Keyframe's MCP tools directly and follow their contracts" in contents[0]
     assert "Show or share one frame: overriding fast path" in contents[0]
     assert "Do not call `video_list_moments`, `video_get_transcript`, or" in contents[0]
     assert "Call `video_get_frame` exactly once" in contents[0]
@@ -266,7 +266,7 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "without image input cannot evaluate candidates" in contents[0]
     assert "must not call the frame clear, clean, best, representative" in contents[0]
     assert "Omit OCR when it is low-confidence or not meaningful" in contents[0]
-    assert "open this skill only through the exact host-provided locator" in contents[0]
+    assert "When this skill applies, open only through the exact host-provided locator" in contents[0]
     assert "marketplace/keyframe/version/skills/keyframe-video-rag/SKILL.md" in contents[0]
     assert "do not search for another copy" in contents[0]
     assert "Copy the returned structured `video_id` byte-for-byte" in contents[0]
@@ -308,8 +308,8 @@ def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
         "render_markdown byte-for-byte",
         "angle-bracket destination delimiters",
         "sole MCP image block bytes",
-        "no browser, shell/terminal media command, web-download",
-        "at most one host-required read-only SKILL.md load",
+        "no browser, shell/terminal command, web-download",
+        "Does not load SKILL.md",
         "Never requests quality=source",
         "Tesseract OCR",
         "visual-quality claim",
@@ -317,6 +317,16 @@ def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
         "between 4725 and 4741 seconds",
     ):
         assert requirement in no_vision_criteria
+
+    skill_ui_paths = [
+        PLUGIN / "skills" / "keyframe-video-rag" / "agents" / "openai.yaml",
+        ROOT / ".agents" / "skills" / "keyframe-video-rag" / "agents" / "openai.yaml",
+        ROOT / ".claude" / "skills" / "keyframe-video-rag" / "agents" / "openai.yaml",
+    ]
+    skill_ui_contents = [path.read_text(encoding="utf-8") for path in skill_ui_paths]
+    assert skill_ui_contents[0] == skill_ui_contents[1] == skill_ui_contents[2]
+    assert "allow_implicit_invocation: false" in skill_ui_contents[0]
+    assert "multi-evidence analysis" in skill_ui_contents[0]
 
     assert forward["model"] == "image-capable GPT-5.6"
     forward_criteria = " ".join(forward["success_criteria"])

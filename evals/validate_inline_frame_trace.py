@@ -72,11 +72,18 @@ _UNLABELED_TEXT_CLAIM = re.compile(
     r"^\s*(?:extracted\s+text|ocr|on[- ]screen\s+text|visible\s+text)\s*:",
     re.IGNORECASE,
 )
-_SHELL_CONTROL = re.compile(r"(?:&&|\|\||\$\(|`|[|;]|>>?|<)")
-_READ_COMMAND = re.compile(r"\b(?:cat|Get-Content|head|sed|tail|type)\b", re.IGNORECASE)
-_MEDIA_OR_MUTATING_COMMAND = re.compile(
-    r"\b(?:browser|cp|curl|ffmpeg|ffprobe|mkdir|mv|open|osascript|playwright|"
-    r"rm|screencapture|wget|yt-dlp)\b",
+_FUTURE_FRAME_RETRIEVAL_GOAL = re.compile(
+    r"^(?:i(?:['\N{RIGHT SINGLE QUOTATION MARK}]ll| will)|"
+    r"i(?:['\N{RIGHT SINGLE QUOTATION MARK}]m| am) going to|"
+    r"next,?\s+i(?:['\N{RIGHT SINGLE QUOTATION MARK}]ll| will))\b"
+    r".*\b(?:choose|find|provide|pull|retrieve|return|select|share|show)\b"
+    r".*\b(?:frame|image|photo|shot|screenshot|still)\b",
+    re.IGNORECASE,
+)
+_EVIDENCE_LOCATION_PHRASE = re.compile(
+    r"\b(?:inside|within)\s+(?:the\s+)?"
+    r"(?:[A-Za-z0-9#]+[- ]?){0,5}"
+    r"(?:chapter|cue|hit|match|search\s+result|segment|timestamp|transcript)\b",
     re.IGNORECASE,
 )
 
@@ -194,16 +201,6 @@ def _tool_result(item: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _is_allowed_skill_load(command: str) -> bool:
-    if "SKILL.md" not in command or not _READ_COMMAND.search(command):
-        return False
-    if _MEDIA_OR_MUTATING_COMMAND.search(command):
-        return False
-    # Shell wrappers add quotes and -lc, but a skill read never needs a pipeline,
-    # redirection, command chain, or substitution.
-    return not _SHELL_CONTROL.search(command)
-
-
 def _meaningful_ocr(text: str, confidence: Any) -> bool:
     try:
         score = float(confidence)
@@ -236,7 +233,24 @@ def _validate_agent_text(
             stripped = line.strip()
             if not stripped or stripped == render_markdown:
                 continue
+            is_final = message_number == final_message_number
+            visual_matches = list(_VISUAL_CLAIM.finditer(stripped))
+            component_claim_text = (
+                stripped if is_final else _EVIDENCE_LOCATION_PHRASE.sub("", stripped)
+            )
             if stripped.lower().startswith(("provenance:", "source:", "timestamp:")):
+                if _QUALITY_CLAIM.search(stripped):
+                    errors.append(f"agent message {message_number} makes a visual-quality claim")
+                if visual_matches:
+                    errors.append(
+                        f"agent message {message_number} makes an unsupported visual claim"
+                    )
+                if _COMPONENT_STATE_CLAIM.search(component_claim_text):
+                    errors.append(
+                        f"agent message {message_number} makes an unsupported component/state claim"
+                    )
+                if _FRAMING_CLAIM.search(stripped):
+                    errors.append(f"agent message {message_number} makes an unsupported framing claim")
                 continue
             if stripped.startswith("Tesseract OCR:"):
                 payload = stripped.removeprefix("Tesseract OCR:").strip().strip("`\"' ")
@@ -258,19 +272,26 @@ def _validate_agent_text(
                     f"agent message {message_number} contains an unlabeled or non-verbatim OCR claim"
                 )
                 continue
+            is_future_frame_goal = bool(_FUTURE_FRAME_RETRIEVAL_GOAL.search(stripped))
+            allows_future_visible_media = bool(
+                not is_final
+                and is_future_frame_goal
+                and visual_matches
+                and all(match.group(0).casefold() == "visible" for match in visual_matches)
+            )
             # A pre-retrieval progress message can repeat the user's desired quality as a goal;
             # only the final no-vision answer can falsely assert that the returned pixels meet it.
-            if message_number == final_message_number and _QUALITY_CLAIM.search(stripped):
+            if is_final and _QUALITY_CLAIM.search(stripped):
                 errors.append(f"agent message {message_number} makes a visual-quality claim")
-            if _VISUAL_CLAIM.search(stripped):
+            if visual_matches and not allows_future_visible_media:
                 errors.append(f"agent message {message_number} makes an unsupported visual claim")
-            if _COMPONENT_STATE_CLAIM.search(stripped):
+            if _COMPONENT_STATE_CLAIM.search(component_claim_text):
                 errors.append(
                     f"agent message {message_number} makes an unsupported component/state claim"
                 )
-            if message_number == final_message_number and _FRAMING_CLAIM.search(stripped):
+            if is_final and _FRAMING_CLAIM.search(stripped):
                 errors.append(f"agent message {message_number} makes an unsupported framing claim")
-            if message_number == final_message_number:
+            if is_final:
                 errors.append(
                     f"agent message {message_number} makes an unsupported free-form final claim"
                 )
@@ -422,15 +443,9 @@ def validate_trace(
             errors.append(f"{tool} must return a result")
 
     commands = [item for item in logical_items if item.get("type") == "command_execution"]
-    allowed_skill_loads = 0
     for item in commands:
         command = str(item.get("command", ""))
-        if _is_allowed_skill_load(command):
-            allowed_skill_loads += 1
-        else:
-            errors.append(f"forbidden shell/terminal action: {command!r}")
-    if allowed_skill_loads > 1:
-        errors.append(f"expected at most one read-only SKILL.md load, got {allowed_skill_loads}")
+        errors.append(f"forbidden shell/terminal action: {command!r}")
 
     forbidden_item_terms = ("approval", "browser", "permission", "web_search", "web-search")
     for item in logical_items:

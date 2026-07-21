@@ -54,25 +54,6 @@ def _valid_trace(
     ocr_confidence: float = 0.39,
 ) -> list[dict[str, Any]]:
     events = [_event("thread.started"), _event("turn.started")]
-    skill_command = (
-        "/bin/zsh -lc \"sed -n '1,220p' "
-        "'/tmp/keyframe/skills/keyframe-video-rag/SKILL.md'\""
-    )
-    command_started = {
-        "id": "skill",
-        "type": "command_execution",
-        "command": skill_command,
-        "status": "in_progress",
-    }
-    events.extend(
-        [
-            _event("item.started", command_started),
-            _event(
-                "item.completed",
-                {**command_started, "status": "completed", "exit_code": 0},
-            ),
-        ]
-    )
     events.extend(
         _call(
             "ingest",
@@ -372,6 +353,27 @@ def test_rejects_latency_duplicate_and_workaround_actions(mutation: str, expecte
     assert any(expected in error for error in report.errors)
 
 
+def test_rejects_read_only_skill_load_for_single_frame_fast_path() -> None:
+    events = _valid_trace()
+    events.append(
+        _event(
+            "item.completed",
+            {
+                "id": "skill",
+                "type": "command_execution",
+                "command": "cat /tmp/keyframe/skills/keyframe-video-rag/SKILL.md",
+                "status": "completed",
+                "exit_code": 0,
+            },
+        )
+    )
+
+    report = validate_trace(events, elapsed_s=12.0)
+
+    assert report.passed is False
+    assert any("forbidden shell/terminal action" in error for error in report.errors)
+
+
 @pytest.mark.parametrize(
     ("tool", "argument", "value", "expected"),
     [
@@ -448,6 +450,101 @@ def test_allows_requested_quality_as_a_progress_goal_but_not_a_final_claim() -> 
     report = validate_trace(events, elapsed_s=12.0)
 
     assert report.passed is True
+
+
+@pytest.mark.parametrize(
+    "progress_text",
+    [
+        (
+            "I\u2019ll use Keyframe's cached index to target the motherboard-install segment "
+            "and return the clearest visible screenshot, without using browser or shell tools."
+        ),
+        (
+            "I found a completed-action match inside the motherboard-install segment and "
+            "will now retrieve exactly one full frame at that timestamp."
+        ),
+    ],
+)
+def test_allows_nonvisual_retrieval_and_text_evidence_progress(progress_text: str) -> None:
+    events = _valid_trace()
+    events.insert(
+        2,
+        _event(
+            "item.completed",
+            {
+                "id": "progress",
+                "type": "agent_message",
+                "text": progress_text,
+            },
+        ),
+    )
+
+    report = validate_trace(events, elapsed_s=12.0)
+
+    assert report.passed is True
+
+
+def test_rejects_prefinal_factual_visual_claim() -> None:
+    events = _valid_trace()
+    events.insert(
+        2,
+        _event(
+            "item.completed",
+            {
+                "id": "progress",
+                "type": "agent_message",
+                "text": "The image shows a black motherboard.",
+            },
+        ),
+    )
+
+    report = validate_trace(events, elapsed_s=12.0)
+
+    assert report.passed is False
+    assert any("unsupported visual claim" in error for error in report.errors)
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "I will return a screenshot that shows a smiling presenter.",
+        "I found a transcript hit, and the motherboard is installed inside the case.",
+    ],
+)
+def test_rejects_visual_claim_hidden_in_progress_language(claim: str) -> None:
+    events = _valid_trace()
+    events.insert(
+        2,
+        _event(
+            "item.completed",
+            {
+                "id": "progress",
+                "type": "agent_message",
+                "text": claim,
+            },
+        ),
+    )
+
+    report = validate_trace(events, elapsed_s=12.0)
+
+    assert report.passed is False
+    assert any("unsupported" in error for error in report.errors)
+
+
+@pytest.mark.parametrize("label", ["Source", "Provenance", "Timestamp"])
+def test_rejects_visual_claim_hidden_in_allowed_metadata_line(label: str) -> None:
+    report = validate_trace(
+        _valid_trace(
+            final_text=(
+                f"{MARKDOWN}\n\n{label}: The image shows a black motherboard "
+                "installed inside the case."
+            )
+        ),
+        elapsed_s=12.0,
+    )
+
+    assert report.passed is False
+    assert any("unsupported visual claim" in error for error in report.errors)
 
 
 def test_rejects_low_confidence_ocr_even_when_labeled() -> None:
