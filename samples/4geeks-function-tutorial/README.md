@@ -31,5 +31,5 @@ produce different OCR when native-tool versions change.
 The frames visibly contain the instructor and third-party product interfaces.
 The CC license covers redistribution of the video-derived material, but no
 separate trademark or publicity-right conclusion is claimed. Use the
-first-party synthetic fixture for the Build Week demo unless a final human
+first-party synthetic fixture for a public demonstration unless a final human
 review approves this sample for that recording.

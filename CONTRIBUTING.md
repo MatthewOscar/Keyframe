@@ -39,4 +39,5 @@ small enough for a normal Git checkout.
 
 Keep changes focused, explain user-visible behavior and compatibility, and list
 the exact validation commands run. Never include cookies, private URLs, cache
-databases, local absolute paths, or `/feedback` session IDs in fixtures or logs.
+databases, local absolute paths, or private client/session identifiers in
+fixtures or logs.

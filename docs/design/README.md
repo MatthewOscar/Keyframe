@@ -11,7 +11,7 @@ The identity is intentionally compact enough for an MCP tool/plugin card.
 | `plugins/keyframe/assets/icon.svg` | Square composer icon on either theme. |
 | `plugins/keyframe/assets/logo-light.svg` | Wordmark on white or light surfaces. |
 | `plugins/keyframe/assets/logo-dark.svg` | Wordmark on charcoal or dark surfaces. |
-| `docs/design/keyframe-devpost-hero.png` | 16:9 DevPost product-story concept. |
+| `docs/design/keyframe-workflow.png` | 16:9 product-workflow concept. |
 
 All three SVGs contain accessible `<title>` and `<desc>` elements, use vector
 geometry, and require no external raster or font asset. The wordmarks request a
@@ -30,16 +30,16 @@ Do not place the light-theme wordmark on dark media or the dark-theme wordmark
 on light media. Preserve at least one-quarter of the icon width as clear space.
 Do not recolor the cursor separately from the amber accent.
 
-## DevPost gallery concept
+## Product-workflow concept
 
-![Keyframe product-story concept](keyframe-devpost-hero.png)
+![Keyframe product-story concept](keyframe-workflow.png)
 
 This generated raster is a launch-story illustration, not a screenshot of a
 hosted Keyframe UI. It visualizes the real workflow—filmstrip moments, separate
 said/shown evidence, a verified source frame, a code edit, and passing tests—
 without implying that v0.1 ships a gallery application. It was generated with
 the built-in image tool after the MCP acceptance suite passed and then copied
-into the repository for design and submission reference.
+into the repository as a visual explanation of the product workflow.
 
 Prompt direction: a premium dark developer-tool launch graphic with a
 left-to-right filmstrip → evidence → verified code flow, near-black/graphite
@@ -52,5 +52,5 @@ The post-v0.1 gallery should look like an evidence browser, not a video editor:
 a timeline of retained moments on the left, a large source frame in the center,
 and timestamped transcript/OCR evidence on the right. Confidence and parse
 status remain visible next to every reconstruction. Do not build this surface
-unless it remains clearly behind the six local tools; they are the submission's
+unless it remains clearly behind the six local tools; they are the product's
 primary interaction surface.

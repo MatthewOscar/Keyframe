@@ -1,11 +1,14 @@
 # Keyframe
 
-**Local video and animated-GIF RAG for coding agents.** Keyframe turns a tutorial,
-screen recording, or animation into timestamped transcript segments, searchable on-screen text,
-representative frames, and reconstructed code. Ask what was *said*, what was
-*shown*, or both—and inspect the source frame before trusting uncertain OCR.
-It runs locally in Codex, ChatGPT desktop, Claude Code, Cursor, and Google
-Antigravity/Agy through the same MCP server.
+**Don't prompt your coding agent. Show it.** Keyframe lets developers teach
+GPT-5.6 by recording themselves doing the task they want the agent to reproduce.
+It turns the explanation, screen actions, and code into timestamped evidence
+that the agent can inspect, apply in a target repository, test, and cite.
+
+Keyframe also makes tutorials, screen recordings, and animated GIFs searchable
+by what was *said* and what was *shown*. It runs locally in Codex, ChatGPT
+desktop, Claude Code, Cursor, and Google Antigravity/Agy through the same MCP
+server.
 
 Keyframe is deliberately split into two parts:
 
@@ -14,8 +17,9 @@ Keyframe is deliberately split into two parts:
 - a small workflow skill teaches any connected agent to retrieve narrowly,
   verify visual evidence, and cite timestamps.
 
-The server does not call an LLM. In the Build Week workflow, Codex running
-GPT-5.6 reasons over Keyframe's evidence, changes code, and runs the tests.
+The server does not call an LLM. Keyframe is the deterministic evidence layer;
+GPT-5.6 in Codex is the reasoning and coding layer that reproduces the
+demonstrated workflow and runs the tests.
 
 ### Topic discovery versus video analysis
 
@@ -28,9 +32,25 @@ adds timestamped evidence. Adjacent or keyword-only results are recommended
 with a caveat rather than ingested. Keyframe itself does not search the public
 web, and its library-wide `video_search` covers only previously indexed media.
 
-![Conceptual Keyframe workflow: video moments become said/shown evidence, verified code, and passing tests](https://raw.githubusercontent.com/MatthewOscar/Keyframe/main/docs/design/keyframe-devpost-hero.png)
+![Conceptual Keyframe workflow: video moments become said/shown evidence, verified code, and passing tests](https://raw.githubusercontent.com/MatthewOscar/Keyframe/main/docs/design/keyframe-workflow.png)
 
 *Product-story concept; Keyframe is a local MCP server and plugin, not a hosted UI.*
+
+## Teach by demonstration
+
+1. Record yourself completing a task while explaining the decisions that
+   matter.
+2. Give the recording and a target repository to GPT-5.6 in Codex.
+3. Ask: “Follow the approach I demonstrated in this video and implement it in
+   this project.”
+4. Keyframe retrieves the relevant spoken explanation, on-screen state, code,
+   and decisive source frames.
+5. GPT-5.6 translates the demonstrated approach into the target codebase and
+   runs its tests.
+
+The important result is not video search by itself. It is the transition from
+a developer showing the work to an agent performing the work with verifiable
+evidence.
 
 ## Quick start
 
@@ -93,14 +113,14 @@ version. In a `requirements.txt` file, write the package spec without quotes.
 To upgrade later, run `uv tool upgrade video-context-mcp` or, inside the active
 virtual environment, `pip install --upgrade 'video-context-mcp[whisper]'`.
 
-For a reproducible Build Week evaluation, pin the tested release explicitly:
+For a reproducible release test, pin the tested version explicitly:
 
 ```bash
 pip install 'video-context-mcp[whisper]==0.3.1'
 ```
 
-The checked-in plugin launchers and judge instructions use that exact pin;
-ordinary users do not need it.
+The checked-in plugin launchers use that exact pin; ordinary users do not need
+it.
 
 The installed plugin described below already launches an isolated, release-pinned
 server with Whisper, so plugin users should not also install the CLI manually.
@@ -209,10 +229,10 @@ client-specific approval steps are in
 registration and the installed plugin together in the same workspace, or the
 client may start two Keyframe processes.
 
-### No-build judge test
+### No-build release test
 
-After installing the release plugin, judges can exercise the published wheel
-against the first-party fixture without building Keyframe from source:
+After installing the release plugin, reviewers can exercise the published
+wheel against the first-party fixture without building Keyframe from source:
 
 ```bash
 git clone --branch v0.3.1 --depth 1 \
@@ -247,8 +267,8 @@ uv sync --frozen --group dev
 uv run pytest -q tests/test_e2e.py
 ```
 
-No network video, account, API key, or prebuilt cache is required for this
-judge path.
+No network video, account, API key, or prebuilt cache is required for this test
+path.
 
 For the real public-URL path, the repository also ships a small CC BY 3.0
 [derived YouTube sample](https://github.com/MatthewOscar/Keyframe/blob/main/samples/4geeks-function-tutorial/README.md) with
@@ -324,7 +344,7 @@ pagination, visual-result behavior, and expected errors.
 
 ```mermaid
 flowchart LR
-    A[Local video / animated GIF / public URL] --> B[FFmpeg + yt-dlp]
+    A[Developer recording / tutorial / GIF / public URL] --> B[FFmpeg + yt-dlp]
     B --> C[Captions]
     B --> W[Isolated optional Whisper worker]
     B --> P[Fast: bounded visual probe]
@@ -340,7 +360,9 @@ flowchart LR
     G --> H
     H --> R[Exact temporary render image]
     H --> I[Keyframe workflow skill]
-    I --> J[Codex / ChatGPT / Claude Code / Cursor / Agy]
+    I --> J[GPT-5.6 / coding agent]
+    J --> K[Target repository]
+    K --> L[Passing tests]
 ```
 
 Remote media and decoded analysis frames use a private, per-`KEYFRAME_HOME`
@@ -422,8 +444,8 @@ on macOS.
   guarantee a downstream model's reasoning. Lighter models can still confuse
   visually similar steps. Models with image input should check exact claims
   against the returned source frame; models without it render a sole requested
-  frame by returning only the exact `render_markdown`. The judged workflow uses
-  GPT-5.6.
+  frame by returning only the exact `render_markdown`. The recommended
+  implementation workflow uses GPT-5.6.
 - Caption availability and media extraction depend on upstream providers and
   the pinned `yt-dlp` release.
 - Remote formats must be downloadable through Keyframe's validated in-process
@@ -440,7 +462,7 @@ on macOS.
 - The bundled registrations target local CLI and desktop sessions. Hosted
   agents cannot launch this STDIO process on the user's machine.
 
-## Build Week and GPT-5.6
+## Codex and GPT-5.6
 
 ### How Codex and Matthew collaborated
 
@@ -458,10 +480,10 @@ embedded model calls; use `yt-dlp` instead of creating a provider extractor;
 make fast ingestion include a bounded visual scout; require exact source-frame
 verification for uncertain OCR; and prioritize a reliable desktop plugin over
 a hosted web app. Matthew reviewed real agent runs, rejected hallucinated video
-interpretations, approved each release direction, and selected the final demo
-story. The detailed record is linked below.
+interpretations, approved each release direction, and selected the
+demonstration-to-code workflow. The detailed record is linked below.
 
-The judged flow uses GPT-5.6 in Codex to turn retrieved video evidence into a
+The reference flow uses GPT-5.6 in Codex to turn retrieved video evidence into a
 tested repository change. Keyframe supplies deterministic evidence; GPT-5.6
 selects relevant moments, compares OCR with source frames, applies the change,
 and explains it with timestamp citations. The ten reproducible prompts in
@@ -470,26 +492,15 @@ Supplementary Mac-plugin regressions for topic-aware discovery, local
 attachment staging, honest provenance, warm-cache latency, and animated GIFs are in
 [`evals/mac-plugin-cases.json`](https://github.com/MatthewOscar/Keyframe/blob/main/evals/mac-plugin-cases.json).
 
-Make the judged model choice explicit before recording. Either launch Codex
-with `codex --model gpt-5.6` or set this in `~/.codex/config.toml`:
+To reproduce the reference workflow, launch Codex with
+`codex --model gpt-5.6` or set this in `~/.codex/config.toml`:
 
 ```toml
 model = "gpt-5.6"
 ```
 
 The development record distinguishes Codex-generated work from human product
-decisions in [`docs/codex-collaboration.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/codex-collaboration.md). The
-submission session ID is intentionally not fabricated and must be recorded from
-`/feedback` before submission.
-
-The release checklist in
-[`docs/submission-checklist.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/submission-checklist.md) maps the current
-Devpost requirements to concrete artifacts and leaves human-only submission
-steps visibly unchecked. A factual worksheet for Matthew's independently
-written submission is in
-[`docs/devpost-submission.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/devpost-submission.md),
-with explicit placeholders for the public demo URL and real `/feedback` Session
-ID.
+decisions in [`docs/codex-collaboration.md`](https://github.com/MatthewOscar/Keyframe/blob/main/docs/codex-collaboration.md).
 
 ## Develop and test
 

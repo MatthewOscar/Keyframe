@@ -1,10 +1,10 @@
 # Keyframe demo target
 
 This intentionally incomplete Python module is the destination for the
-“video → evidence → tested change” Build Week demo. The prepared first-party
-tutorial should explain and show the required `slugify_title` behavior. Codex
-must retrieve that evidence with Keyframe, implement the function, and cite the
-source timestamps.
+“recorded demonstration → evidence → tested change” example. The prepared
+first-party tutorial explains and shows the required `slugify_title` behavior.
+Codex must retrieve that evidence with Keyframe, implement the function, and
+cite the source timestamps.
 
 Run only this target's tests with:
 

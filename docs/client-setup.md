@@ -59,7 +59,7 @@ These commands select the latest compatible release. Quotes are recommended
 because zsh and other shells can interpret `[whisper]` as a wildcard pattern;
 the quotes are unrelated to version pinning. A `requirements.txt` entry needs
 no quotes. Use `video-context-mcp[whisper]==0.3.1` only when reproducing the
-tested Build Week release.
+tested release.
 
 The client and plugin examples below intentionally keep the exact `0.3.1` pin
 so their behavior cannot change unexpectedly during evaluation. Remove the
