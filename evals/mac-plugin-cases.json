@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.2.5",
+  "suite": "keyframe-mac-plugin-v0.2.6",
   "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, reliable inline frame rendering, honest no-vision behavior, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
@@ -82,7 +82,7 @@
         "The render_path bytes equal the sole MCP image block bytes",
         "Does not load SKILL.md and makes no browser, shell/terminal command, web-download, playback, screenshot, extra-copy, or permission-request action",
         "Never requests quality=source for the remote video",
-        "Makes no unsupported component, placement, layout, condition, framing, or visual-quality claim; any meaningful extracted text is explicitly labeled Tesseract OCR and low-confidence or meaningless OCR is omitted"
+        "When image input is unavailable, makes the exact render_markdown its entire final response with no metadata, OCR, caveat, invitation, or unsupported visual claim"
       ]
     },
     {

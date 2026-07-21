@@ -631,6 +631,8 @@ def validate_trace(
         final_text = agent_texts[-1]
         if final_text.count(render_markdown) != 1:
             errors.append("final agent output must contain returned render_markdown exactly once")
+        if final_text.strip() != render_markdown:
+            errors.append("final agent output must equal returned render_markdown with no other text")
         errors.extend(_validate_agent_text(agent_texts, frame_result, render_markdown))
 
     # Keep messages deterministic even when one item violates overlapping rules.

@@ -143,8 +143,7 @@ def _valid_trace(
             {
                 "id": "answer",
                 "type": "agent_message",
-                "text": final_text
-                or f"{MARKDOWN}\n\nSource: Linus Tech Tips PC-build guide\nTimestamp: `01:18:52`",
+                "text": final_text or MARKDOWN,
             },
         )
     )
@@ -167,7 +166,7 @@ def test_valid_trace_passes_and_deduplicates_started_completed_items() -> None:
 def test_windows_render_path_is_absolute_when_validated_on_any_host() -> None:
     render_path = r"C:\Users\runner\AppData\Local\Temp\frame-abc.jpg"
     markdown = f"![Keyframe frame at 01:18:52](<{render_path}>)"
-    events = _valid_trace(final_text=f"{markdown}\n\nTimestamp: 01:18:52")
+    events = _valid_trace(final_text=markdown)
     frame_item = _tool_items(events, "video_get_frame")[-1]
     frame_item["result"]["content"][-1]["text"] = markdown
     frame_item["result"]["structured_content"]["render_path"] = render_path
@@ -286,7 +285,7 @@ def test_verifies_live_render_file_hash_and_image_byte_identity(tmp_path: Path) 
     render_path = tmp_path / f"frame-{digest}.jpg"
     render_path.write_bytes(image_bytes)
     markdown = f"![Keyframe frame at 01:18:52](<{render_path}>)"
-    events = _valid_trace(final_text=f"{markdown}\n\nTimestamp: 01:18:52")
+    events = _valid_trace(final_text=markdown)
     frame_item = _tool_items(events, "video_get_frame")[-1]
     frame_item["result"]["content"][0]["data"] = base64.b64encode(image_bytes).decode(
         "ascii"
@@ -557,7 +556,7 @@ def test_rejects_low_confidence_ocr_even_when_labeled() -> None:
     assert any("low-confidence or meaningless" in error for error in report.errors)
 
 
-def test_accepts_meaningful_verbatim_tesseract_ocr() -> None:
+def test_rejects_even_meaningful_ocr_for_strict_single_image_final() -> None:
     report = validate_trace(
         _valid_trace(
             final_text=f"{MARKDOWN}\n\nTesseract OCR: Motherboard Installation",
@@ -567,7 +566,8 @@ def test_accepts_meaningful_verbatim_tesseract_ocr() -> None:
         elapsed_s=12.0,
     )
 
-    assert report.passed is True
+    assert report.passed is False
+    assert "final agent output must equal returned render_markdown with no other text" in report.errors
 
 
 def test_cli_returns_one_for_behavioral_failure_and_two_for_bad_input(

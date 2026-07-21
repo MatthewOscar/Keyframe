@@ -191,14 +191,23 @@ class IngestResult(StrictModel):
     )
     retrieval_guidance: str = Field(
         default=(
-            "Choose follow-up evidence from the user's intent. For one no-vision image of a "
-            "physical action, make exactly one video_search with channel='said' inside the exact "
+            "For a request whose sole deliverable is one image, pre-retrieval progress may state "
+            "the requested retrieval goal but must not claim an uninspected candidate visibly "
+            "contains anything or meets a visual-quality standard. Choose follow-up evidence from "
+            "the user's intent. If the user supplied an exact timestamp or moment_id, preserve "
+            "that selector and skip search. Otherwise, for one untimed no-vision image of a "
+            "physical action, make "
+            "exactly one video_search with channel='said' inside the exact "
             "chapter bounds; skip action_phase='announcement', choose the first "
             "action_phase='completed' hit, or fall back to the first 'in_progress' hit, then make "
             "exactly one "
-            "video_get_frame with that hit's start_s as t, "
-            "region='full', and quality='auto'. Never derive t from a chapter boundary, use an "
-            "OCR/title hit, list moments, read transcript pages, or search twice for that path."
+            "video_get_frame with that hit's start_s as t. On that untimed path, the search is "
+            "mandatory: never call video_get_frame before it has completed. Use "
+            "region='full' and quality='auto'. Never derive t from a chapter boundary, use an "
+            "OCR/title hit, list moments, read transcript pages, or search twice for that path. "
+            "If this is the sole-image request and the frame result says image input was omitted "
+            "or unsupported, return only its render_markdown byte-for-byte and stop; add no other "
+            "text. Outside that sole-image path, continue the requested multi-evidence workflow."
         ),
         description=(
             "Trusted server workflow guidance for selecting the next Keyframe evidence call; "
@@ -433,7 +442,10 @@ class FrameResult(StrictModel):
     render_markdown: str = Field(
         description=(
             "Ready-to-copy Markdown that renders the exact attached image without browser, "
-            "shell, download, or permission steps."
+            "shell, download, or permission steps. When the user's sole requested deliverable is "
+            "one image and image input is omitted or unsupported, this must be the entire final "
+            "response, copied byte-for-byte with no other text. Multi-evidence requests may still "
+            "use the structured timestamp, provenance, and explicitly labeled OCR fields."
         )
     )
     render_expires_at: str = Field(

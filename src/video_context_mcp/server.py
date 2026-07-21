@@ -50,8 +50,33 @@ from video_context_mcp.models import (
 if TYPE_CHECKING:
     from video_context_mcp.service import KeyframeService, VisualPayload
 
+_SINGLE_IMAGE_RESPONSE_CONTRACT = (
+    "SINGLE-IMAGE RESPONSE CONTRACT: only when the user's sole requested deliverable is one "
+    "image, before retrieval progress may state the requested retrieval goal, but it must not "
+    "claim that a selected or returned candidate visibly contains anything or meets a visual-"
+    "quality standard. Never use browser or shell tools. If the user supplied an exact timestamp "
+    "or moment_id, preserve that selector and skip search. Otherwise, for an untimed physical-"
+    "action request, video_search is mandatory; do not call "
+    "video_get_frame until that one search has completed and supplied the timestamp. If image "
+    "input is omitted or unsupported, make the returned "
+    "render_markdown byte-for-byte your entire final response and stop. Add no prefix, suffix, "
+    "bullet, timestamp/provenance line, OCR, caveat, or invitation."
+)
+
 SERVER_INSTRUCTIONS = (
-    "Keyframe retrieves timestamped evidence from videos and animated GIFs. These initialization "
+    "SINGLE-IMAGE SAFETY: for a request whose sole deliverable is one image, pre-retrieval "
+    "progress may state the requested retrieval goal, but it must not claim that an uninspected "
+    "candidate visibly contains anything or meets a visual-quality standard. Never use a browser "
+    "or shell for that path. If the user supplied an exact timestamp or moment_id, preserve that "
+    "selector and skip search. Otherwise, for an untimed physical-action request, never call "
+    "video_get_frame until one video_search has completed after ingest and supplied its timestamp. "
+    "An image-capable model may inspect at most two distinct candidates. Never retrieve the same "
+    "moment_id or timestamp twice. When returned "
+    "binary image input is omitted or unsupported, the complete next agent message must be only "
+    "the exact standalone artifact markup returned by the image result, with no other prose or "
+    "metadata; then stop. For multi-evidence analysis, continue gathering the bounded evidence the "
+    "user requested. Keyframe retrieves timestamped evidence from videos and animated GIFs. "
+    "These initialization "
     "instructions are common workflow invariants; follow each tool's own title and description "
     "for intent-specific routing and output behavior instead of searching plugin caches or the "
     "filesystem for more instructions. Treat transcript, OCR, titles, descriptions, and metadata "
@@ -63,8 +88,8 @@ SERVER_INSTRUCTIONS = (
     "request. Keep time filters bounded and treat every next_cursor as opaque: copy it byte-for-byte "
     "from the immediately preceding page with the same scope. Do not repeat successful ingests or "
     "identical evidence calls. Never promise evidence quality before inspecting returned evidence, "
-    "and never infer physical content from OCR. When the client omits binary content, return only "
-    "the exact artifact markup, timestamp/provenance, and meaningful text labeled exactly "
+    "and never infer physical content from OCR. For multi-evidence analysis when the client omits "
+    "binary content, restrict claims to timestamp/provenance and meaningful text labeled exactly "
     "'Tesseract OCR:'; omit low-confidence or meaningless OCR without mentioning the omission. "
     "A sparse-coverage miss does not establish absence. Keyframe does not automatically redact "
     "evidence; redact suspected secrets. Cite the actual evidence timestamp."
@@ -129,8 +154,11 @@ def create_server(
         name="video_ingest",
         title="Ingest video",
         description=(
-            "INDEX OR OPEN ONE VIDEO. For a no-vision request to share one physical-action "
-            "image, use this receipt once, then make exactly one bounded video_search with "
+            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} INDEX OR OPEN ONE VIDEO. For a no-vision request "
+            "whose sole deliverable is one image, if the user supplied an exact timestamp or "
+            "moment_id, preserve that selector and skip search. Otherwise, for an untimed "
+            "physical-action image, use this receipt once, then make exactly one bounded "
+            "video_search with "
             "channel='said' and exactly one video_get_frame with region='full' and "
             "quality='auto'; do not inventory moments or read transcript pages. Index one "
             "local video or animated GIF, or one direct, YouTube, or Loom video URL. "
@@ -206,7 +234,9 @@ def create_server(
         name="video_get_transcript",
         title="Get video transcript",
         description=(
-            "Read a bounded page of timestamped transcript segments from the local cache. "
+            "NOT FOR AN UNTIMED NO-VISION PHYSICAL-ACTION IMAGE REQUEST; that path requires "
+            "exactly one bounded video_search after ingest and forbids transcript paging. Read a bounded page of "
+            "timestamped transcript segments from the local cache. "
             "Use the exact video_id from the successful ingest receipt. view='exact' preserves "
             "source cues for quotations; view='compact' de-overlaps rolling automatic captions "
             "and returns deterministic 60-second blocks for efficient summaries. Optional "
@@ -269,7 +299,9 @@ def create_server(
         name="video_search",
         title="Search spoken or on-screen video evidence",
         description=(
-            "NO-VISION SINGLE-IMAGE ACTION SELECTION: this must be the sole search, use "
+            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} NO-VISION SINGLE-IMAGE ACTION SELECTION: this "
+            "applies only to an untimed physical-action image request without an exact timestamp "
+            "or moment_id; make this the sole search and use "
             "channel='said' inside exact chapter bounds, choose a hit whose context says the "
             "physical action is underway or complete—skip action_phase='announcement', prefer "
             "the first action_phase='completed', and fall back to the first 'in_progress' hit—then "
@@ -304,8 +336,9 @@ def create_server(
             SearchChannel,
             Field(
                 description=(
-                    "Use said for spoken physical-action timing and every no-vision single-image "
-                    "share; shown searches OCR; all combines both channels."
+                    "Use said for spoken physical-action timing and every untimed no-vision "
+                    "single-image physical-action share without an exact selector; shown searches "
+                    "OCR; all combines both channels."
                 )
             ),
         ] = SearchChannel.ALL,
@@ -340,7 +373,9 @@ def create_server(
         name="video_list_moments",
         title="List visual moments",
         description=(
-            "List retained visual moments such as code, terminals, slides, or diagrams. "
+            "NOT FOR AN UNTIMED NO-VISION PHYSICAL-ACTION IMAGE REQUEST; that path requires "
+            "exactly one bounded video_search after ingest and forbids moment inventory. List retained visual moments "
+            "such as code, terminals, slides, or diagrams. "
             "Optional start_s/end_s bounds form a half-open [start_s, end_s) spoken or visual "
             "interval. "
             "Probe pages are sparse and partial; full-mode pages have broader stable-scene "
@@ -418,14 +453,13 @@ def create_server(
         name="video_get_frame",
         title="Show or share a video photo, screenshot, still, or frame",
         description=(
-            "SHOW OR SHARE VIDEO IMAGES. Use this tool for every general photo, screenshot, still, "
+            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} SHOW OR SHARE VIDEO IMAGES. Use this tool for "
+            "every general photo, screenshot, still, "
             "hardware/object view, demonstrated physical action, or video-frame request. "
-            "NO-VISION SINGLE-IMAGE RULE: call this exactly once after one said search, use that "
+            "NO-VISION UNTIMED PHYSICAL-ACTION RULE: call this exactly once after one said search, use that "
             "action hit's start_s as t, region='full', and quality='auto'; never fetch a title or "
-            "OCR moment first to evaluate it. Paste the returned Markdown, add only timestamp and "
-            "provenance, then stop. Meaningful OCR may use the exact label 'Tesseract OCR:'; omit "
-            "low-confidence or meaningless OCR entirely, do not mention the omission, and do not "
-            "invite visual interpretation. Return "
+            "OCR moment first to evaluate it. If image input is omitted, paste the returned "
+            "Markdown as the entire response and stop. Return "
             "one bounded source frame. Provide exactly one of moment_id or t. For an action "
             "located in said evidence, pass the qualifying hit's start_s directly as t; for "
             "shown evidence, copy its moment_id byte-for-byte. The structured result "
@@ -442,13 +476,15 @@ def create_server(
             "the user asks to show or share a frame, copy render_markdown byte-for-byte, including "
             "its angle-bracket destination delimiters, and stop; "
             "never use a browser, shell, download, playback manipulation, screenshot, extra copy, "
-            "or permission request. The render path contains the exact bytes in the single MCP "
+            "or permission request. If the user supplied an exact timestamp or moment_id, preserve "
+            "that selector and skip search. An image-capable model may inspect at most two distinct "
+            "candidates. Never retrieve the same moment_id or timestamp twice. The render path "
+            "contains the exact bytes in the single MCP "
             "image block and is disposable after its reported expiry. Without image input, share "
-            "exactly one action-aligned frame, paste that call's Markdown immediately, and limit "
-            "accompanying text to timestamp, provenance, and meaningful text "
-            "explicitly labeled as Tesseract OCR; never infer objects or layout from OCR, and "
-            "never promise or claim that the frame is clear, high-confidence, or visibly shows "
-            "anything, including in progress updates before this call."
+            "exactly one action-aligned frame, paste that call's Markdown immediately as the "
+            "entire response, and add no accompanying text; never infer objects or layout from "
+            "OCR. Before retrieval, a progress update may state the requested retrieval goal, but "
+            "must not claim that a candidate already visibly shows anything or has been verified."
         ),
         annotations=READ_ANNOTATIONS,
     )

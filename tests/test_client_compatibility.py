@@ -220,15 +220,18 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     ]
     contents = [path.read_text(encoding="utf-8") for path in paths]
     assert contents[0] == contents[1] == contents[2]
-    assert "Use only for multi-evidence video or animated-GIF analysis" in contents[0]
-    assert "sole requested deliverable is one photo, screenshot, still, or frame" in contents[0]
-    assert "even if locating it requires ingest, search, or timestamp selection" in contents[0]
-    assert "call Keyframe's MCP tools directly and follow their contracts" in contents[0]
+    assert contents[0].startswith("---\nname: keyframe-video-rag\ndescription: Single-photo")
+    assert "requests must not open this skill" in contents[0]
+    assert "call Keyframe MCP directly and never use browser or shell tools" in contents[0]
+    assert "Use this skill only for multi-evidence video or animated-GIF analysis" in contents[0]
     assert "Show or share one frame: overriding fast path" in contents[0]
     assert "Do not call `video_list_moments`, `video_get_transcript`, or" in contents[0]
     assert "Call `video_get_frame` exactly once" in contents[0]
-    assert "never repeat or echo visual-quality adjectives" in contents[0]
-    assert "omit the OCR line" in contents[0]
+    assert "progress update may state the requested retrieval goal" in contents[0]
+    assert "must not claim that an uninspected candidate" in contents[0]
+    assert "requested quality" in contents[0]
+    assert "entire final response and stop" in contents[0]
+    assert "Add no prefix, suffix, bullet, timestamp/provenance line" in contents[0]
     assert "Use when Codex must understand" not in contents[0]
     assert "For each source, make at most one successful fast ingest" in contents[0]
     assert "Do not split, restage, or reconstruct the source" in contents[0]
@@ -264,9 +267,11 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "never test a source URL or path in downstream tools" in contents[0]
     assert "exactly one frame call" in contents[0]
     assert "without image input cannot evaluate candidates" in contents[0]
-    assert "must not call the frame clear, clean, best, representative" in contents[0]
-    assert "Omit OCR when it is low-confidence or not meaningful" in contents[0]
-    assert "When this skill applies, open only through the exact host-provided locator" in contents[0]
+    assert "It must not\n   judge visual quality or infer components" in contents[0]
+    assert "`render_markdown` the entire final response; add no other text" in contents[0]
+    assert (
+        "When this skill applies, open only through the exact host-provided locator" in contents[0]
+    )
     assert "marketplace/keyframe/version/skills/keyframe-video-rag/SKILL.md" in contents[0]
     assert "do not search for another copy" in contents[0]
     assert "Copy the returned structured `video_id` byte-for-byte" in contents[0]
@@ -277,6 +282,17 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "`requested_t_covered`" in contents[0]
     assert "`Tesseract OCR:`" in contents[0]
     assert "temporally local evidence" in contents[0]
+    verify_visuals = contents[0].split("## Verify visuals", maxsplit=1)[1]
+    exact_selector_exception = (
+        "If the user supplied an exact timestamp or `moment_id`, preserve that selector and "
+        "skip search."
+    )
+    strict_search_sequence = "For a no-vision show/share request about an action"
+    assert exact_selector_exception in verify_visuals
+    assert verify_visuals.index(exact_selector_exception) < verify_visuals.index(
+        strict_search_sequence
+    )
+    assert "sole requested deliverable is one image" in contents[0]
     server_source = (ROOT / "src/video_context_mcp/server.py").read_text(encoding="utf-8")
     assert "Ingest each source with mode='fast' once" in server_source
     assert "one mode='full' upgrade per source" in server_source
@@ -289,8 +305,12 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "CODE OR TERMINAL CONTENT ONLY" in server_source
     assert "channel='all', never 'both'" in server_source
     assert "coherent nearby context" in server_source
-    assert "including in progress updates before this call" in server_source
-    assert "never infer objects or layout from OCR" in server_source
+    assert "progress update may state the requested retrieval goal" in server_source
+    assert "never infer objects or layout from " in server_source
+    assert '"OCR. Before retrieval' in server_source
+    assert "SINGLE-IMAGE SAFETY" in server_source
+    assert "SINGLE-IMAGE RESPONSE CONTRACT" in server_source
+    assert "render_markdown byte-for-byte your entire" in server_source
 
 
 def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
@@ -311,8 +331,9 @@ def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
         "no browser, shell/terminal command, web-download",
         "Does not load SKILL.md",
         "Never requests quality=source",
-        "Tesseract OCR",
-        "visual-quality claim",
+        "entire final response",
+        "no metadata, OCR",
+        "unsupported visual claim",
         "exactly one cache-hit video_ingest",
         "between 4725 and 4741 seconds",
     ):

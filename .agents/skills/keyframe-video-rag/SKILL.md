@@ -1,6 +1,6 @@
 ---
 name: keyframe-video-rag
-description: Use only for multi-evidence video or animated-GIF analysis with Keyframe MCP, such as synthesizing transcript, on-screen text, code, and multiple visual moments to explain a tutorial, identify an issue, recover code, or implement a demonstrated change with timestamp citations. Do not invoke or open this skill when the user's sole requested deliverable is one photo, screenshot, still, or frame—even if locating it requires ingest, search, or timestamp selection; call Keyframe's MCP tools directly and follow their contracts. When this skill applies, open only through the exact host-provided locator; for a Codex plugin cache preserve the full marketplace/keyframe/version/skills/keyframe-video-rag/SKILL.md suffix and never guess or collapse components.
+description: Single-photo, screenshot, still, or frame requests must not open this skill; call Keyframe MCP directly and never use browser or shell tools. In a no-image-input sole-image request, progress may state the requested retrieval goal but must not claim an uninspected candidate visibly contains anything or has verified visual quality; return the tool's render_markdown alone. Use this skill only for multi-evidence video or animated-GIF analysis with Keyframe MCP, such as synthesizing transcript, on-screen text, code, and multiple visual moments to explain a tutorial, identify an issue, recover code, or implement a demonstrated change with timestamp citations. When this skill applies, open only through the exact host-provided locator; for a Codex plugin cache preserve the full marketplace/keyframe/version/skills/keyframe-video-rag/SKILL.md suffix and never guess or collapse components.
 ---
 
 # Use Keyframe Video RAG
@@ -10,30 +10,34 @@ or inspect plugin caches for additional Keyframe instructions.
 
 ## Show or share one frame: overriding fast path
 
-This section overrides the generic moment-routing and transcript guidance below whenever the user
-asks to show, share, or extract one photo, screenshot, still, or frame.
+This section overrides the generic moment-routing and transcript guidance below whenever the user's
+sole requested deliverable is one image: a photo, screenshot, still, or frame to show, share, or
+extract.
 
 1. Do not use a browser, shell, terminal, web download, playback, screenshot, extra-copy, or
-   permission action at any phase. Keyframe publishes the host-renderable image itself. Without
-   image input, never repeat or echo visual-quality adjectives from the user—including “clear,”
-   “clean,” “best,” or “representative”—in an intent, progress update, or final response.
+   permission action at any phase. Keyframe publishes the host-renderable image itself. Before
+   retrieval, a progress update may state the requested retrieval goal, including its subject or
+   requested quality, but it must not claim that an uninspected candidate visibly contains the
+   subject, meets that quality, or has been verified.
 2. If the conversation has no exact successful ingest receipt, call `video_ingest` once with
    `mode="fast"`, then copy its `video_id` and exact descriptive chapter bounds byte-for-byte.
-3. For a no-vision model, make one `channel="said"` search inside those unpadded chapter bounds
-   using the requested object and physical-action terms. Skip `action_phase="announcement"`,
-   choose the first `action_phase="completed"` hit, or fall back to the first `in_progress` hit;
-   reject a title or transition such as “next,”
-   “now,” or “time to.” Do not call `video_list_moments`, `video_get_transcript`, or
-   `video_get_code`, and do not run a second search.
+3. If the user supplied an exact timestamp or `moment_id`, preserve that selector and skip search.
+   Otherwise, for a no-vision untimed physical-action request, make one `channel="said"` search
+   inside those unpadded chapter bounds using the requested object and physical-action terms. Skip
+   `action_phase="announcement"`, choose the first `action_phase="completed"` hit, or fall back to
+   the first `in_progress` hit; reject a title or transition such as “next,” “now,” or “time to.”
+   Do not call `video_list_moments`, `video_get_transcript`, or `video_get_code`, and do not run a
+   second search.
 4. Call `video_get_frame` exactly once at that timestamp with `region="full"` and
-   `quality="auto"`. Paste its `render_markdown` byte-for-byte and stop. Do not judge image
-   quality or infer visual facts; include only timestamp, provenance, and meaningful text labeled
-   `Tesseract OCR:` when available. If OCR is low-confidence or meaningless, omit the OCR line
-   entirely and do not mention the omission. Do not label the timestamp as a section start or end
-   unless it actually equals the returned chapter boundary.
+   `quality="auto"`. When this sole-image request has no image input, paste its
+   `render_markdown` byte-for-byte as the
+   entire final response and stop. Add no prefix, suffix, bullet, timestamp/provenance line, OCR,
+   caveat, or invitation. The Markdown alt text already reports the decoded timestamp. Do not
+   judge image quality or infer visual facts.
 5. A vision-capable model may inspect at most two distinct `video_get_frame` candidates and
    describe only what it actually sees. It still pastes the selected result's exact
    `render_markdown` and uses no browser, shell, download, screenshot, copy, or permission flow.
+   Never retrieve the same `moment_id` or timestamp twice.
 
 ## Confirm Keyframe actually ran
 
@@ -250,8 +254,9 @@ asks to show, share, or extract one photo, screenshot, still, or frame.
    announces an action before an explanatory detour, so never use that
    announcement timestamp as visual proof. Use an approximately eight-second
    post-anchor fallback only when no action-aligned hit exists.
-   For a no-vision show/share request about an action in a spoken tutorial, use
-   a strict call sequence: one ingest when no exact receipt is present (a cache
+   If the user supplied an exact timestamp or `moment_id`, preserve that selector and skip search.
+   For a no-vision show/share request about an action in a spoken tutorial with no exact selector,
+   use a strict call sequence: one ingest when no exact receipt is present (a cache
    hit for an already indexed source), one `said` search inside the exact
    unpadded chapter bounds, then one frame call. From that first search, choose
    the first hit whose `context` describes the action in progress or completed.
@@ -264,22 +269,20 @@ asks to show, share, or extract one photo, screenshot, still, or frame.
    from transcript/search evidence before calling `video_get_frame`, make
    exactly one frame call, then paste that call's `render_markdown` immediately
    and stop. Never retrieve a frame merely to test whether it looks right, and
-   never paste Markdown saved from an earlier candidate. Before or after that
-   call, never promise or claim that a candidate is clear, high-confidence, or
-   visibly shows anything; this applies to progress updates as well as the final
-   answer. Never use visual-quality words such as `clear`, `clean`, `best`,
-   `representative`, or `high-confidence` in any intent, progress, or final
-   message, and do not echo those adjectives from the user. Any accompanying text
-   is limited to timestamp, provenance, and meaningful text explicitly labeled
-   `Tesseract OCR:`. Omit OCR when it is low-confidence or not meaningful. It
-   must not call the frame clear, clean, best, representative, or otherwise
-   judge its visual quality, and must not infer components, objects, placement,
-   layout, condition, framing, or any other visual fact.
+   never paste Markdown saved from an earlier candidate. Before retrieval, a
+   progress update may state the requested retrieval goal, but it must not claim
+   that a candidate already visibly shows anything, meets a visual-quality
+   standard, or has been verified. For this sole-image request, make the returned
+   `render_markdown` the entire final response; add no other text. It must not
+   judge visual quality or infer components, objects, placement, layout, condition,
+   framing, or any other visual fact.
 8. If a code-looking candidate is rejected because its heuristic kind is not
    code or terminal, call `video_get_frame` at that retained timestamp. Do not
    escalate solely because classification was wrong.
 9. Call `video_get_frame` for diagrams, slides, terminal output, UI state, or
    any OCR result that appears incomplete or surprising.
+   Outside the overriding single-image path, label OCR-only evidence exactly
+   `Tesseract OCR:` and never present it as visual inspection.
 10. Before reporting an exact identity, require one temporally local evidence
    bundle containing the spoken referent and the visual title/number/state.
    Prefer the image over reconstructed OCR when they disagree.

@@ -232,14 +232,16 @@ Use an approximately eight-second post-anchor fallback only when no
 action-aligned timestamp exists.
 
 A model with image input may inspect and accurately describe the selected
-frame and may inspect one distinct second candidate. A model without image
-input must finish action-aligned timestamp selection from text evidence first,
-make exactly one frame call, paste that call's `render_markdown` immediately,
-and stop. Its accompanying text is limited to timestamp, provenance, and
-meaningful text explicitly labeled `Tesseract OCR:`; omit low-confidence or
-meaningless OCR. OCR alone does not justify claims about visible objects,
-layout, placement, condition, or framing. A no-vision model also cannot call a
-frame clear, clean, best, representative, or otherwise judge visual quality.
+frame and may inspect one distinct second candidate. For a sole-image
+show/share request, a model without image input must finish action-aligned
+timestamp selection from text evidence first, make exactly one frame call,
+paste that call's `render_markdown` immediately, and stop. The Markdown is its
+entire final response; the alt text already includes the decoded timestamp. It
+adds no metadata, OCR, caveat, invitation, or visual description. Before
+retrieval, progress may state the requested retrieval goal, including requested
+quality, but it must not claim that a candidate already visibly contains the
+subject, meets that quality, or has been verified. Multi-evidence analysis can
+continue with structured timestamp, provenance, and explicitly labeled OCR.
 
 Rendered-frame files have a seven-day TTL and share a 256 MiB quota in the
 private Keyframe temp namespace; quota pressure can evict them earlier. Keyframe

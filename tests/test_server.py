@@ -267,8 +267,12 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert "exactly one video_search" in ingest_output["retrieval_guidance"]["default"]
     assert "instead of searching plugin caches" in server.instructions
     assert "exact structured video_id byte-for-byte" in server.instructions
+    assert server.instructions.startswith("SINGLE-IMAGE SAFETY:")
+    assert "progress may state the requested retrieval goal" in server.instructions
+    assert "complete next agent message must be only" in server.instructions
+    assert "Otherwise, for an untimed physical-action request" in server.instructions
+    assert "never call video_get_frame until one video_search has completed" in server.instructions
     for routing_term in (
-        "video_get_frame",
         "video_get_code",
         "render_markdown",
         "photo",
@@ -290,14 +294,27 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert "coherent nearby context" in tools["video_search"].description
     assert "make this the only search" in tools["video_search"].description
     assert "do not list moments" in tools["video_search"].description
-    assert tools["video_search"].description.startswith(
-        "NO-VISION SINGLE-IMAGE ACTION SELECTION:"
-    )
+    assert tools["video_search"].description.startswith("SINGLE-IMAGE RESPONSE CONTRACT:")
+    assert "NO-VISION SINGLE-IMAGE ACTION SELECTION:" in tools["video_search"].description
+    for name in ("video_ingest", "video_search", "video_get_frame"):
+        description = tools[name].description
+        assert description.startswith("SINGLE-IMAGE RESPONSE CONTRACT:")
+        assert "progress may state the requested retrieval goal" in description
+        assert "render_markdown byte-for-byte your entire final response" in description
+        assert "Add no prefix, suffix, bullet, timestamp/provenance line" in description
     assert (
-        "every no-vision single-image share"
+        "every untimed no-vision single-image physical-action share"
         in tools["video_search"].parameters["properties"]["channel"]["description"]
     )
-    assert "including in progress updates before this call" in tools["video_get_frame"].description
+    assert "progress update may state the requested retrieval goal" in tools["video_get_frame"].description
+    assert transcript_tool.description.startswith(
+        "NOT FOR AN UNTIMED NO-VISION PHYSICAL-ACTION IMAGE REQUEST"
+    )
+    assert "forbids transcript paging" in transcript_tool.description
+    assert tools["video_list_moments"].description.startswith(
+        "NOT FOR AN UNTIMED NO-VISION PHYSICAL-ACTION IMAGE REQUEST"
+    )
+    assert "forbids moment inventory" in tools["video_list_moments"].description
     assert "photo" not in transcript_tool.description.lower()
     assert "frame" not in transcript_tool.description.lower()
     assert "photo" not in tools["video_list_moments"].description.lower()
@@ -314,8 +331,11 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert "never use a browser, shell" in frame_tool.description
     assert "permission request" in frame_tool.description
     assert frame_tool.title == "Show or share a video photo, screenshot, still, or frame"
-    assert frame_tool.description.startswith("SHOW OR SHARE VIDEO IMAGES.")
-    assert "NO-VISION SINGLE-IMAGE RULE" in frame_tool.description
+    assert "SHOW OR SHARE VIDEO IMAGES." in frame_tool.description
+    assert "NO-VISION UNTIMED PHYSICAL-ACTION RULE" in frame_tool.description
+    assert "Markdown as the entire response and stop" in frame_tool.description
+    assert "add no accompanying text" in frame_tool.description
+    assert "add only timestamp and provenance" not in frame_tool.description
     assert frame_tool.parameters["$defs"]["FrameQuality"]["enum"] == [
         "auto",
         "probe",
@@ -340,6 +360,10 @@ def test_exact_tool_surface_and_annotations() -> None:
         "render_expires_at",
     ):
         assert field in frame_tool.output_schema["properties"]
+    assert (
+        "must be the entire final response"
+        in frame_tool.output_schema["properties"]["render_markdown"]["description"]
+    )
     code_output = tools["video_get_code"].output_schema["properties"]
     assert tools["video_get_code"].title == "Extract code or terminal text only"
     assert tools["video_get_code"].description.startswith("CODE OR TERMINAL CONTENT ONLY.")
@@ -350,12 +374,13 @@ def test_exact_tool_surface_and_annotations() -> None:
     search_hit_schema = tools["video_search"].output_schema["$defs"]["SearchHit"]
     assert "context" in search_hit_schema["properties"]
     assert "action_phase" in search_hit_schema["properties"]
-    assert "span multiple action phases" in search_hit_schema["properties"]["context"][
-        "description"
-    ]
-    assert "matched spoken cue at start_s" in search_hit_schema["properties"][
-        "action_phase"
-    ]["description"]
+    assert (
+        "span multiple action phases" in search_hit_schema["properties"]["context"]["description"]
+    )
+    assert (
+        "matched spoken cue at start_s"
+        in search_hit_schema["properties"]["action_phase"]["description"]
+    )
     assert "video_get_frame" in search_hit_schema["properties"]["moment_id"]["description"]
     for name in ("video_get_transcript", "video_search", "video_list_moments"):
         cursor_schema = tools[name].parameters["properties"]["cursor"]
@@ -364,6 +389,49 @@ def test_exact_tool_surface_and_annotations() -> None:
         assert tools[name].output_schema is not None
         output_cursor = tools[name].output_schema["properties"]["next_cursor"]
         assert "byte-for-byte" in output_cursor["description"]
+
+
+def test_exact_frame_selector_skips_search_in_direct_server_guidance() -> None:
+    server = create_server(FakeService())
+    tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
+    ingest_guidance = tools["video_ingest"].output_schema["properties"][
+        "retrieval_guidance"
+    ]["default"]
+
+    for guidance in (
+        server_module._SINGLE_IMAGE_RESPONSE_CONTRACT,
+        tools["video_ingest"].description,
+        ingest_guidance,
+        tools["video_get_frame"].description,
+    ):
+        assert "exact timestamp or moment_id" in guidance
+        assert "preserve that selector and skip search" in guidance
+
+
+def test_markdown_only_final_is_scoped_to_a_sole_image_deliverable() -> None:
+    server = create_server(FakeService())
+    tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
+    frame_markdown = tools["video_get_frame"].output_schema["properties"][
+        "render_markdown"
+    ]["description"]
+
+    for guidance in (server_module._SINGLE_IMAGE_RESPONSE_CONTRACT, frame_markdown):
+        normalized = " ".join(guidance.lower().split())
+        assert "sole requested deliverable is one image" in normalized
+        assert "image input is omitted or unsupported" in normalized
+
+    assert "multi-evidence analysis" in server.instructions
+
+
+def test_direct_frame_metadata_limits_vision_candidate_retrieval() -> None:
+    server = create_server(FakeService())
+    frame_description = {
+        tool.name: tool for tool in server._tool_manager.list_tools()
+    }["video_get_frame"].description
+
+    for guidance in (server.instructions, frame_description):
+        assert "image-capable model may inspect at most two distinct candidates" in guidance
+        assert "Never retrieve the same moment_id or timestamp twice" in guidance
 
 
 @pytest.mark.asyncio
