@@ -148,6 +148,10 @@ def test_plugin_manifests_reference_client_specific_mcp_configs() -> None:
     assert codex["author"]["name"] == "Matthew Wyatt"
     assert codex["interface"]["developerName"] == "Matthew Wyatt"
     assert codex["interface"]["shortDescription"] == "Search what videos say and GIFs show"
+    discovery_prompt = codex["interface"]["defaultPrompt"][0]
+    assert len(codex["interface"]["defaultPrompt"]) == 3
+    assert "strongly relevant public video about this topic" in discovery_prompt
+    assert "analyze the best match with Keyframe" in discovery_prompt
     assert claude["author"]["name"] == "Matthew Wyatt"
     assert cursor["author"]["name"] == "Matthew Wyatt"
 
@@ -161,8 +165,8 @@ def test_plugin_manifests_reference_client_specific_mcp_configs() -> None:
     assert _load(PLUGIN / "plugin.json") == {
         "name": "keyframe",
         "description": (
-            "Index videos and animated GIFs locally, then retrieve timestamped transcript, "
-            "OCR, code, and frames through MCP."
+            "Analyze supplied or host-discovered videos and animated GIFs locally, then "
+            "retrieve timestamped transcript, OCR, code, and frames through MCP."
         ),
     }
 
@@ -219,11 +223,32 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
         ROOT / ".claude" / "skills" / "keyframe-video-rag" / "SKILL.md",
     ]
     contents = [path.read_text(encoding="utf-8") for path in paths]
+    normalized_skill = " ".join(contents[0].split())
     assert contents[0] == contents[1] == contents[2]
-    assert contents[0].startswith("---\nname: keyframe-video-rag\ndescription: Single-photo")
+    assert contents[0].startswith("---\nname: keyframe-video-rag\ndescription: Use Keyframe")
+    assert "A Keyframe invocation selects the analysis capability" in contents[0]
+    assert "must not change the ordinary meaning of the user's topic" in contents[0]
+    assert "Discover a source without changing the topic" in contents[0]
+    assert '"build my own processor"\n   means a CPU' in contents[0]
+    assert "use the host's normal web search" in contents[0]
+    assert "at most three individual public" in contents[0]
+    assert "direct watch URL for one public video" in contents[0]
+    assert "product landing page is not an ingest candidate" in contents[0]
+    assert '`video_search` without a `video_id` searches only' in contents[0]
+    assert "Keyword overlap, a passing mention, or an adjacent technology" in contents[0]
+    assert "duration-guard retry may repeat the same source" in contents[0]
+    assert "ingest call for a second URL" in contents[0]
+    assert "never auto-ingest an adjacent fallback" in contents[0]
+    assert (
+        "When every direct-video candidate is weak or adjacent, do not ingest"
+        in normalized_skill
+    )
+    assert "ask the user to provide one" in normalized_skill
+    assert "Attribute web discovery separately" in normalized_skill
     assert "requests must not open this skill" in contents[0]
     assert "call Keyframe MCP directly and never use browser or shell tools" in contents[0]
-    assert "Use this skill only for multi-evidence video or animated-GIF analysis" in contents[0]
+    assert "Use Keyframe for multi-evidence video or animated-GIF analysis" in contents[0]
+    assert "explicitly invoked requests to find and analyze videos about a topic" in contents[0]
     assert "Show or share one frame: overriding fast path" in contents[0]
     assert "Do not call `video_list_moments`, `video_get_transcript`, or" in contents[0]
     assert "Call `video_get_frame` exactly once" in contents[0]
@@ -311,6 +336,12 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "SINGLE-IMAGE SAFETY" in server_source
     assert "SINGLE-IMAGE RESPONSE CONTRACT" in server_source
     assert "render_markdown byte-for-byte your entire" in server_source
+    assert "TOPIC DISCOVERY CONTRACT" in server_source
+    assert "does not make Keyframe the subject" in server_source
+    assert "Keyframe does not search the public web" in server_source
+    assert "central subject and instructional task strongly match" in server_source
+    assert "With video_id omitted this" in server_source
+    assert "existing local Keyframe library" in server_source
 
 
 def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
@@ -347,7 +378,8 @@ def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
     skill_ui_contents = [path.read_text(encoding="utf-8") for path in skill_ui_paths]
     assert skill_ui_contents[0] == skill_ui_contents[1] == skill_ui_contents[2]
     assert "allow_implicit_invocation: false" in skill_ui_contents[0]
-    assert "multi-evidence analysis" in skill_ui_contents[0]
+    assert "preserve my topic" in skill_ui_contents[0]
+    assert "find a strongly relevant public video" in skill_ui_contents[0]
 
     assert forward["model"] == "image-capable GPT-5.6"
     forward_criteria = " ".join(forward["success_criteria"])
@@ -355,3 +387,82 @@ def test_mac_plugin_eval_covers_no_vision_and_forward_frame_rendering() -> None:
     assert "matches the displayed frame" in forward_criteria
     assert "between 4719 and 4741 seconds" in forward_criteria
     assert "render_markdown byte-for-byte" in forward_criteria
+
+
+def test_mac_plugin_eval_covers_topic_aware_discovery() -> None:
+    suite = _load(ROOT / "evals" / "mac-plugin-cases.json")
+    cases = {case["id"]: case for case in suite["cases"]}
+
+    ordinary = cases["desktop-topic-discovery-ordinary-meaning"]
+    assert ordinary["model"] == "Luna 5.6 medium"
+    assert ordinary["prompt"] == (
+        "[@keyframe] How can I build my own processor? Are there any videos about it?"
+    )
+    ordinary_criteria = " ".join(ordinary["success_criteria"])
+    for requirement in (
+        "interprets processor as a CPU",
+        "host web search before Keyframe ingestion",
+        "do not add Keyframe, keyframes, or video processor",
+        "at most three individual public videos",
+        "calls video_ingest exactly once",
+        "status=ready plus a video_id",
+        "bounded Keyframe evidence call",
+        "Attributes URL discovery to host web search",
+        "at most two additional relevant links",
+    ):
+        assert requirement in ordinary_criteria
+
+    contextual_case = cases["desktop-topic-discovery-contextual-meaning"]
+    assert contextual_case["model"] == "Luna 5.6 medium"
+    assert contextual_case["prompt"] == (
+        "[@keyframe] I mean a custom video-processing pipeline, not a CPU. "
+        "Are there videos about building one?"
+    )
+    contextual = " ".join(contextual_case["success_criteria"])
+    assert "video-processing-pipeline meaning" in contextual
+    assert "rather than forcing the CPU interpretation" in contextual
+    assert "direct individual-public-video watch URL" in contextual
+    assert "same-source duration retry" in contextual
+    assert "does not auto-ingest an adjacent fallback" in contextual
+
+    weak_case = cases["desktop-topic-discovery-weak-match"]
+    assert weak_case["model"] == "Luna 5.6 medium"
+    assert "{{WEAK_DISCOVERY_TOPIC}}" in weak_case["prompt"]
+    weak = " ".join(weak_case["success_criteria"])
+    assert "not a strong match" in weak
+    assert "Does not call video_ingest" in weak
+    assert "asks the user to choose or refine" in weak
+
+    no_web_case = cases["desktop-topic-discovery-no-web"]
+    assert no_web_case["model"] == "Luna 5.6 medium with host web search disabled"
+    assert no_web_case["prompt"] == ordinary["prompt"]
+    no_web = " ".join(no_web_case["success_criteria"])
+    assert "does not pretend the local Keyframe library is public-web discovery" in no_web
+    assert "does not call video_search as an internet substitute" in no_web
+    assert "needs a supplied or externally discovered URL" in no_web
+
+
+def test_release_version_is_synchronized_across_runtime_lock_evals_and_docs() -> None:
+    runtime_source = (ROOT / "src" / "video_context_mcp" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    assert f'__version__ = "{PACKAGE_VERSION}"' in runtime_source
+
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    root_package = next(
+        package for package in lock["package"] if package["name"] == "video-context-mcp"
+    )
+    assert root_package["version"] == PACKAGE_VERSION
+
+    assert _load(ROOT / "evals" / "cases.json")["suite"] == (
+        f"keyframe-v{PACKAGE_VERSION}"
+    )
+    assert _load(ROOT / "evals" / "mac-plugin-cases.json")["suite"] == (
+        f"keyframe-mac-plugin-v{PACKAGE_VERSION}"
+    )
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    client_setup = (ROOT / "docs" / "client-setup.md").read_text(encoding="utf-8")
+    for content in (readme, client_setup):
+        assert f"video-context-mcp[whisper]=={PACKAGE_VERSION}" in content
+        assert f"--ref v{PACKAGE_VERSION}" in content

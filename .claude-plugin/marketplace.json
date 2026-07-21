@@ -3,12 +3,12 @@
   "owner": {
     "name": "Matthew Wyatt"
   },
-  "description": "Keyframe local video and animated-GIF retrieval tools with a timestamp-aware agent workflow.",
+  "description": "Keyframe host-assisted video discovery plus local video and animated-GIF analysis with a timestamp-aware agent workflow.",
   "plugins": [
     {
       "name": "keyframe",
       "source": "./plugins/keyframe",
-      "description": "Search what videos say and show, inspect animated GIF states, and verify source frames before using OCR.",
+      "description": "Preserve the user's topic, analyze a supplied or host-discovered video, inspect animated GIF states, and verify timestamped evidence.",
       "author": {
         "name": "Matthew Wyatt"
       },

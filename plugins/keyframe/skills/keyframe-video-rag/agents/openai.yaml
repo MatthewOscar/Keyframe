@@ -1,6 +1,6 @@
 interface:
   display_name: "Keyframe Video RAG"
-  short_description: "Retrieve timestamped video and GIF context"
-  default_prompt: "Use $keyframe-video-rag for a multi-evidence analysis of this video or animated GIF, synthesizing transcript, on-screen text, and visuals with timestamp citations."
+  short_description: "Find and analyze timestamped video evidence"
+  default_prompt: "Use $keyframe-video-rag to preserve my topic, find a strongly relevant public video when I provide no source, and analyze it with timestamp citations."
 policy:
   allow_implicit_invocation: false

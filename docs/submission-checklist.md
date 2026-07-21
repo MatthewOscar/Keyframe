@@ -37,7 +37,10 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 - [x] Commit and push v0.2.5 to `main`, then confirm the full CI matrix.
 - [x] Review the v0.2.6 no-vision response-contract correction and pass the
       local release gate.
-- [ ] Commit and push v0.2.6 to `main`, then confirm the full CI matrix.
+- [x] Commit and push v0.2.6 to `main`, then confirm the full CI matrix.
+- [x] Review the v0.2.7 topic-aware discovery correction and pass the local
+      release gate.
+- [ ] Commit and push v0.2.7 to `main`, then confirm the full CI matrix.
 - [x] Create and push immutable tag `v0.1.0`.
 - [x] Create and push the verified agent-efficiency release tag `v0.1.3`.
 - [x] Create the PyPI project, configure Trusted Publishing, and publish the
@@ -56,8 +59,10 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
       then confirm its PyPI and GitHub releases complete successfully.
 - [x] Create and push the single-frame routing correction release tag `v0.2.5`,
       then confirm its PyPI and GitHub releases complete successfully.
-- [ ] Create and push the no-vision response-contract correction release tag
+- [x] Create and push the no-vision response-contract correction release tag
       `v0.2.6`, then confirm its PyPI and GitHub releases complete successfully.
+- [ ] Create and push the topic-aware discovery correction release tag
+      `v0.2.7`, then confirm its PyPI and GitHub releases complete successfully.
 - [ ] Install the tagged plugin in Codex and ChatGPT desktop and run the
       headline flow with Codex visibly configured to `gpt-5.6`.
 - [ ] Smoke-install the tagged release in Claude Code, Cursor, and Agy; approve
@@ -66,8 +71,8 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
       a public YouTube tutorial for the remote-ingest demo shot.
 - [ ] Run all ten prompts in `evals/cases.json` and record observed outcomes.
 - [ ] Run the Mac plugin regressions in `evals/mac-plugin-cases.json` and record
-      attachment staging, provenance, warm-cache timing, no-vision inline frame
-      rendering, forward visual accuracy, and animated-GIF results.
+      topic-aware discovery, attachment staging, provenance, warm-cache timing,
+      no-vision inline frame rendering, forward visual accuracy, and animated-GIF results.
 - [ ] Record a clear, English-language narrated demo no longer than 2:59 that
       shows the working product and explicitly explains how Codex and GPT-5.6
       were used.

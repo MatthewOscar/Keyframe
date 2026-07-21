@@ -17,6 +17,17 @@ Keyframe is deliberately split into two parts:
 The server does not call an LLM. In the Build Week workflow, Codex running
 GPT-5.6 reasons over Keyframe's evidence, changes code, and runs the tests.
 
+### Topic discovery versus video analysis
+
+An explicit Keyframe invocation selects the analysis capability; it does not
+change the subject of the question. When a user asks for videos about a topic
+without supplying a source, the connected agent uses its normal web-search
+capability to identify up to three individual public videos. If one centrally
+matches the requested subject and task, Keyframe ingests that one source and
+adds timestamped evidence. Adjacent or keyword-only results are recommended
+with a caveat rather than ingested. Keyframe itself does not search the public
+web, and its library-wide `video_search` covers only previously indexed media.
+
 ![Conceptual Keyframe workflow: video moments become said/shown evidence, verified code, and passing tests](https://raw.githubusercontent.com/MatthewOscar/Keyframe/main/docs/design/keyframe-devpost-hero.png)
 
 *Product-story concept; Keyframe is a local MCP server and plugin, not a hosted UI.*
@@ -25,7 +36,7 @@ GPT-5.6 reasons over Keyframe's evidence, changes code, and runs the tests.
 
 ### Prerequisites
 
-Keyframe v0.2.6 supports CPython 3.12, 3.13, and 3.14. Install these native
+Keyframe v0.2.7 supports CPython 3.12, 3.13, and 3.14. Install these native
 tools before starting:
 
 - FFmpeg and `ffprobe` for media inspection and frame extraction
@@ -47,7 +58,7 @@ brew install ffmpeg tesseract node uv
 
 The Whisper extra on Apple Silicon requires macOS 14 or newer because of its
 ONNX Runtime dependency. Intel macOS is not a supported Whisper/plugin target
-in v0.2.6.
+in v0.2.7.
 
 ### Install the command-line server
 
@@ -85,7 +96,7 @@ virtual environment, `pip install --upgrade 'video-context-mcp[whisper]'`.
 For a reproducible Build Week evaluation, pin the tested release explicitly:
 
 ```bash
-pip install 'video-context-mcp[whisper]==0.2.6'
+pip install 'video-context-mcp[whisper]==0.2.7'
 ```
 
 The checked-in plugin launchers and judge instructions use that exact pin;
@@ -129,14 +140,14 @@ Add the following to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.keyframe]
 command = "uvx"
-args = ["--python", "3.12", "--from", "video-context-mcp[whisper]==0.2.6", "video-context-mcp", "serve", "--transport", "stdio"]
+args = ["--python", "3.12", "--from", "video-context-mcp[whisper]==0.2.7", "video-context-mcp", "serve", "--transport", "stdio"]
 startup_timeout_sec = 180
 tool_timeout_sec = 1900
 env = { KEYFRAME_ALLOW_TEMP_UPLOADS = "true" }
 ```
 
 This direct MCP configuration is pinned for reproducibility. Remove
-`==0.2.6` from the `--from` value if you intentionally want the launcher to
+`==0.2.7` from the `--from` value if you intentionally want the launcher to
 follow the latest PyPI release instead.
 
 For local files, Keyframe uses workspace roots advertised by the MCP client.
@@ -152,20 +163,22 @@ shown. Cite the timestamps.”
 ### Install the Keyframe plugin in Codex and ChatGPT desktop
 
 The plugin bundles the same MCP server with the `keyframe-video-rag` workflow
-skill. The marketplace is pinned to `v0.2.6`; its launcher installs the exact
-`video-context-mcp[whisper]==0.2.6` PyPI release in an isolated Python 3.12
+skill. The marketplace is pinned to `v0.2.7`; its launcher installs the exact
+`video-context-mcp[whisper]==0.2.7` PyPI release in an isolated Python 3.12
 runtime, regardless of the user's system Python:
 
 ```bash
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.6
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.7
 codex plugin add keyframe@keyframe-tools
 ```
 
 In OpenAI clients, the bundled multi-evidence workflow skill is explicit-only
 by design: ordinary one-frame requests route directly through Keyframe's MCP
 contracts, so the model never searches a plugin cache or opens a shell merely
-to read instructions. Select `keyframe-video-rag` when a task truly needs
-multi-evidence synthesis across transcript, OCR, code, and several moments.
+to read instructions. Select `keyframe-video-rag` when a task needs
+multi-evidence synthesis across transcript, OCR, code, and several moments, or
+when you want the host to find a strongly relevant public video and have
+Keyframe verify the best match.
 
 To replace an older release-pinned installation, refresh both the marketplace
 snapshot and the installed plugin:
@@ -173,7 +186,7 @@ snapshot and the installed plugin:
 ```bash
 codex plugin remove keyframe@keyframe-tools
 codex plugin marketplace remove keyframe-tools
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.6
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.7
 codex plugin add keyframe@keyframe-tools
 ```
 
@@ -185,7 +198,7 @@ codex plugin marketplace add .
 
 Then restart the ChatGPT desktop app, open the Plugins Directory, select the
 **Keyframe** marketplace source, and install **Keyframe**. Start a new chat so
-the updated plugin and tools are loaded. Keyframe v0.2.6 targets this local
+the updated plugin and tools are loaded. Keyframe v0.2.7 targets this local
 desktop flow; it does not host a ChatGPT web app.
 
 Claude Code and Cursor can install the same repository as a marketplace, while
@@ -201,7 +214,7 @@ After installing the release plugin, judges can exercise the published wheel
 against the first-party fixture without building Keyframe from source:
 
 ```bash
-git clone --branch v0.2.6 --depth 1 \
+git clone --branch v0.2.7 --depth 1 \
   https://github.com/MatthewOscar/Keyframe.git
 cd Keyframe
 codex --model gpt-5.6
@@ -378,7 +391,7 @@ on macOS.
 
 ## Current limits
 
-- v0.2.6 accepts individual public videos and local animated GIFs, not playlists
+- v0.2.7 accepts individual public videos and local animated GIFs, not playlists
   or livestreams. Static GIFs should be attached as images; remote GIF URLs are
   not yet an advertised compatibility surface.
 - Private, members-only, age-restricted, DRM, cookie, and login flows are out of
@@ -415,7 +428,7 @@ on macOS.
 - Whisper is optional in the base Python package and bundled by the installable
   plugin. It can be resource intensive on CPU-only machines, and first use may
   download the configured model before ingestion begins.
-- Windows support is preview-level in v0.2.6.
+- Windows support is preview-level in v0.2.7.
 - The bundled registrations target local CLI and desktop sessions. Hosted
   agents cannot launch this STDIO process on the user's machine.
 
@@ -445,8 +458,8 @@ tested repository change. Keyframe supplies deterministic evidence; GPT-5.6
 selects relevant moments, compares OCR with source frames, applies the change,
 and explains it with timestamp citations. The ten reproducible prompts in
 [`evals/cases.json`](https://github.com/MatthewOscar/Keyframe/blob/main/evals/cases.json) exercise that division of labor.
-Supplementary Mac-plugin regressions for local attachment staging, honest
-provenance, warm-cache latency, and animated GIFs are in
+Supplementary Mac-plugin regressions for topic-aware discovery, local
+attachment staging, honest provenance, warm-cache latency, and animated GIFs are in
 [`evals/mac-plugin-cases.json`](https://github.com/MatthewOscar/Keyframe/blob/main/evals/mac-plugin-cases.json).
 
 Make the judged model choice explicit before recording. Either launch Codex

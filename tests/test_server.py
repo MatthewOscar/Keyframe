@@ -268,6 +268,14 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert "instead of searching plugin caches" in server.instructions
     assert "exact structured video_id byte-for-byte" in server.instructions
     assert server.instructions.startswith("SINGLE-IMAGE SAFETY:")
+    assert "TOPIC DISCOVERY CONTRACT:" in server.instructions
+    assert "does not make Keyframe the subject" in server.instructions
+    assert "'build my own processor' means a CPU" in server.instructions
+    assert "Keyframe does not search the public web" in server.instructions
+    assert "direct watch URLs" in server.instructions
+    assert "duration retry may repeat the same source" in server.instructions
+    assert "ingest call for a second URL" in server.instructions
+    assert "central subject and instructional task strongly match" in server.instructions
     assert "progress may state the requested retrieval goal" in server.instructions
     assert "complete next agent message must be only" in server.instructions
     assert "Otherwise, for an untimed physical-action request" in server.instructions
@@ -294,6 +302,9 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert "coherent nearby context" in tools["video_search"].description
     assert "make this the only search" in tools["video_search"].description
     assert "do not list moments" in tools["video_search"].description
+    assert "existing local Keyframe library" in tools["video_search"].description
+    assert "never public-web or YouTube discovery" in tools["video_search"].description
+    assert "does not discover public videos from a topic" in tools["video_ingest"].description
     assert tools["video_search"].description.startswith("SINGLE-IMAGE RESPONSE CONTRACT:")
     assert "NO-VISION SINGLE-IMAGE ACTION SELECTION:" in tools["video_search"].description
     for name in ("video_ingest", "video_search", "video_get_frame"):

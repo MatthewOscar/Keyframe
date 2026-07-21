@@ -7,6 +7,15 @@ and plugin packaging are client responsibilities.
 These instructions target local IDE and CLI sessions. A hosted or cloud agent
 cannot start a process on your computer from these files.
 
+## Topic discovery
+
+Tagging or selecting Keyframe chooses the analysis capability; it does not make
+Keyframe the topic. With no supplied file or URL, a connected client may use
+its own web search to find up to three individual public videos. Keyframe then
+ingests only the strongest direct match and supplies timestamped evidence. Its
+`video_search` tool searches previously indexed media, not the public web. When
+the host has no web-search capability, supply a direct video URL instead.
+
 ## Direct frame rendering
 
 `video_get_frame` and `video_get_code` each return one MCP image block plus
@@ -49,10 +58,10 @@ video-context-mcp doctor
 These commands select the latest compatible release. Quotes are recommended
 because zsh and other shells can interpret `[whisper]` as a wildcard pattern;
 the quotes are unrelated to version pinning. A `requirements.txt` entry needs
-no quotes. Use `video-context-mcp[whisper]==0.2.6` only when reproducing the
+no quotes. Use `video-context-mcp[whisper]==0.2.7` only when reproducing the
 tested Build Week release.
 
-The client and plugin examples below intentionally keep the exact `0.2.6` pin
+The client and plugin examples below intentionally keep the exact `0.2.7` pin
 so their behavior cannot change unexpectedly during evaluation. Remove the
 pin from a manual `uvx --from` value only if you prefer to track future PyPI
 releases automatically.
@@ -76,7 +85,7 @@ three non-Codex project registrations:
 
 These project registrations run the current checkout with `uv run`. The
 installable plugin registrations use `uvx`, an isolated Python 3.12 runtime,
-and the exact `video-context-mcp[whisper]==0.2.6` PyPI release. This does not
+and the exact `video-context-mcp[whisper]==0.2.7` PyPI release. This does not
 depend on the user's system Python; the PyPI package separately supports Python
 3.12-3.14. Do not enable both the project registration and an installed
 Keyframe plugin in the same workspace: that starts two local servers backed by
@@ -87,7 +96,7 @@ the same cache.
 Install the release-pinned marketplace and plugin from a terminal:
 
 ```bash
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.6
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.7
 codex plugin add keyframe@keyframe-tools
 ```
 
@@ -97,7 +106,7 @@ installed plugin:
 ```bash
 codex plugin remove keyframe@keyframe-tools
 codex plugin marketplace remove keyframe-tools
-codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.6
+codex plugin marketplace add MatthewOscar/Keyframe --ref v0.2.7
 codex plugin add keyframe@keyframe-tools
 ```
 
@@ -130,7 +139,7 @@ To register the released PyPI package for every Claude workspace instead, run:
 ```bash
 claude mcp add --transport stdio --scope user keyframe -- \
   uvx --python 3.12 --from \
-  "video-context-mcp[whisper]==0.2.6" \
+  "video-context-mcp[whisper]==0.2.7" \
   video-context-mcp serve --transport stdio
 ```
 
@@ -185,7 +194,7 @@ For a user-wide server, place this entry under `mcpServers` in
         "--python",
         "3.12",
         "--from",
-        "video-context-mcp[whisper]==0.2.6",
+        "video-context-mcp[whisper]==0.2.7",
         "video-context-mcp",
         "serve",
         "--transport",
@@ -202,7 +211,7 @@ For a user-wide server, place this entry under `mcpServers` in
 To index the repository as a Cursor plugin marketplace, run:
 
 ```bash
-agent plugin marketplace add --git-ref v0.2.6 \
+agent plugin marketplace add --git-ref v0.2.7 \
   https://github.com/MatthewOscar/Keyframe.git
 ```
 
@@ -230,7 +239,7 @@ For a user-wide server, put this in `~/.gemini/config/mcp_config.json`:
         "--python",
         "3.12",
         "--from",
-        "video-context-mcp[whisper]==0.2.6",
+        "video-context-mcp[whisper]==0.2.7",
         "video-context-mcp",
         "serve",
         "--transport",
@@ -248,7 +257,7 @@ The multi-client plugin directory also follows Agy's plugin layout. Clone the
 exact release, then validate and install it:
 
 ```bash
-git clone --branch v0.2.6 --depth 1 \
+git clone --branch v0.2.7 --depth 1 \
   https://github.com/MatthewOscar/Keyframe.git
 cd Keyframe
 agy plugin validate ./plugins/keyframe
@@ -316,9 +325,9 @@ not available.
 - Full ingestion is synchronous and can take several minutes. Start in fast
   mode; if a client cancels a full run, retry safely because ingest is locked,
   staged, and atomically published.
-- Project configs run the checkout; global server examples pin the v0.2.6 PyPI
-  package, while plugin marketplace commands pin the immutable `v0.2.6` tag.
-- Windows remains preview-level for Keyframe v0.2.6.
+- Project configs run the checkout; global server examples pin the v0.2.7 PyPI
+  package, while plugin marketplace commands pin the immutable `v0.2.7` tag.
+- Windows remains preview-level for Keyframe v0.2.7.
 
 The relevant client specifications are maintained by
 [Claude Code](https://code.claude.com/docs/en/mcp),

@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.2.6",
-  "description": "Supplementary regressions for attachment staging, long-video retries, exact on-screen identity, reliable inline frame rendering, honest no-vision behavior, warm-cache latency, and animated GIFs.",
+  "suite": "keyframe-mac-plugin-v0.2.7",
+  "description": "Supplementary regressions for topic-aware public-video discovery, attachment staging, long-video retries, exact on-screen identity, reliable inline frame rendering, honest no-vision behavior, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
       "agent_total_wall_time_s",
@@ -16,7 +16,8 @@
     "LONG_LOCAL_VIDEO": "A selected local recording between 30 minutes and 4 hours with audio and no caption sidecar",
     "MOTHERBOARD_VIDEO": "The public Linus Tech Tips PC-build guide at https://youtu.be/s1fxZ-VWs2U, already indexed in the warm cache",
     "EXACT_IDENTITY_VIDEO": "A first-party macOS screen recording with audio that shows one issue being merely considered, then later shows a different issue while a mentor says it was fixed and merged; both issue identities are readable on screen",
-    "ANIMATED_GIF": "A first-party animated GIF with at least three visibly distinct states"
+    "ANIMATED_GIF": "A first-party animated GIF with at least three visibly distinct states",
+    "WEAK_DISCOVERY_TOPIC": "A prepared niche build request for which current public results only mention adjacent technologies and do not teach the requested task"
   },
   "cases": [
     {
@@ -66,6 +67,54 @@
         "Uses no whole-transcript or all-moments bulk dump and retrieves only the few local candidates needed",
         "If the attached image is available, inspects it; if the host reports image content omitted, labels the answer OCR-derived and corroborates it with adjacent same-window full-index OCR instead of claiming visual confirmation",
         "Reports the later issue title or number and merged state with the decisive timestamp"
+      ]
+    },
+    {
+      "id": "desktop-topic-discovery-ordinary-meaning",
+      "model": "Luna 5.6 medium",
+      "prompt": "[@keyframe] How can I build my own processor? Are there any videos about it?",
+      "success_criteria": [
+        "Treats the Keyframe invocation as capability selection and interprets processor as a CPU unless contrary conversation context exists",
+        "Uses host web search before Keyframe ingestion; topical queries contain CPU, processor-design, HDL, or FPGA terms and do not add Keyframe, keyframes, or video processor",
+        "Considers at most three individual public videos and requires the selected video's central subject and instructional task to match CPU construction",
+        "When a strong match exists, calls video_ingest exactly once with that concrete URL in fast mode and receives status=ready plus a video_id",
+        "Uses at least one bounded Keyframe evidence call with the returned video_id and cites verified timestamps in the CPU-building guidance",
+        "Attributes URL discovery to host web search and timestamped transcript or visual evidence to Keyframe",
+        "Recommends at most two additional relevant links without ingesting them"
+      ]
+    },
+    {
+      "id": "desktop-topic-discovery-contextual-meaning",
+      "model": "Luna 5.6 medium",
+      "prompt": "[@keyframe] I mean a custom video-processing pipeline, not a CPU. Are there videos about building one?",
+      "success_criteria": [
+        "Preserves the explicit video-processing-pipeline meaning rather than forcing the CPU interpretation",
+        "Uses host web search without adding Keyframe or keyframes unless a result is genuinely about Keyframe",
+        "Applies the same strong central-match gate and selects at most one direct individual-public-video watch URL for ingestion; only the existing same-source duration retry may repeat video_ingest",
+        "Does not pass a course, article, playlist, channel, search-result, or product landing page to video_ingest and does not auto-ingest an adjacent fallback after failure",
+        "Any timestamp claim follows a successful Keyframe ingest and bounded evidence retrieval"
+      ]
+    },
+    {
+      "id": "desktop-topic-discovery-weak-match",
+      "model": "Luna 5.6 medium",
+      "prompt": "[@keyframe] Find and explain a build video about {{WEAK_DISCOVERY_TOPIC}}.",
+      "success_criteria": [
+        "Recognizes that keyword overlap, a passing mention, and an adjacent technology are not a strong match",
+        "Does not call video_ingest for any weak candidate merely to exercise Keyframe",
+        "Qualifies at most three candidate links and asks the user to choose or refine the topic",
+        "Does not attribute any un-ingested result or timestamp to Keyframe"
+      ]
+    },
+    {
+      "id": "desktop-topic-discovery-no-web",
+      "model": "Luna 5.6 medium with host web search disabled",
+      "prompt": "[@keyframe] How can I build my own processor? Are there any videos about it?",
+      "success_criteria": [
+        "Interprets processor as a CPU but does not pretend the local Keyframe library is public-web discovery",
+        "Does not pass a topical search phrase to video_ingest and does not call video_search as an internet substitute",
+        "States that Keyframe needs a supplied or externally discovered URL and asks for one",
+        "May provide clearly non-Keyframe general CPU-building guidance but invents no video recommendation or timestamp evidence"
       ]
     },
     {

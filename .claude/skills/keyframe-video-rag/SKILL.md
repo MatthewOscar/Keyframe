@@ -1,12 +1,42 @@
 ---
 name: keyframe-video-rag
-description: Single-photo, screenshot, still, or frame requests must not open this skill; call Keyframe MCP directly and never use browser or shell tools. In a no-image-input sole-image request, progress may state the requested retrieval goal but must not claim an uninspected candidate visibly contains anything or has verified visual quality; return the tool's render_markdown alone. Use this skill only for multi-evidence video or animated-GIF analysis with Keyframe MCP, such as synthesizing transcript, on-screen text, code, and multiple visual moments to explain a tutorial, identify an issue, recover code, or implement a demonstrated change with timestamp citations. When this skill applies, open only through the exact host-provided locator; for a Codex plugin cache preserve the full marketplace/keyframe/version/skills/keyframe-video-rag/SKILL.md suffix and never guess or collapse components.
+description: Use Keyframe for multi-evidence video or animated-GIF analysis and for explicitly invoked requests to find and analyze videos about a topic. A Keyframe invocation selects the analysis capability; it must not change the ordinary meaning of the user's topic. Single-photo, screenshot, still, or frame requests must not open this skill; call Keyframe MCP directly and never use browser or shell tools. In a no-image-input sole-image request, progress may state the requested retrieval goal but must not claim an uninspected candidate visibly contains anything or has verified visual quality; return the tool's render_markdown alone. When this skill applies, open only through the exact host-provided locator; for a Codex plugin cache preserve the full marketplace/keyframe/version/skills/keyframe-video-rag/SKILL.md suffix and never guess or collapse components.
 ---
 
 # Use Keyframe Video RAG
 
 This is the workflow skill the host located. After loading it, do not search for another copy
 or inspect plugin caches for additional Keyframe instructions.
+
+## Discover a source without changing the topic
+
+1. Treat an explicit Keyframe invocation as selection of the video-analysis capability, not as
+   part of the subject. Resolve the topic from the user's words and conversation. Prefer its
+   ordinary meaning when context is clear; ask one concise clarification only when materially
+   different interpretations remain genuinely plausible. For example, "build my own processor"
+   means a CPU unless the user supplies contrary context.
+2. When the user asks for videos about a topic but supplies no file, URL, or successful ingest
+   receipt, use the host's normal web search when available to find at most three individual public
+   videos. A candidate must have a direct watch URL for one public video; a course, article,
+   playlist, channel, search-result, or product landing page is not an ingest candidate. Do not add
+   "Keyframe," "keyframes," or "video processor" to the topical query unless the user explicitly
+   asks about those subjects. `video_search` without a `video_id` searches only the already indexed
+   Keyframe library; it is never public-web or YouTube discovery.
+3. Rank candidates by whether their central subject and instructional task directly match the
+   request. Keyword overlap, a passing mention, or an adjacent technology is not a strong match.
+   When the leading candidate is strong, select exactly that one direct URL and start ingestion in
+   fast mode. The existing actionable duration-guard retry may repeat the same source with only the
+   suggested `max_duration_s`; do not make a discovery-driven ingest call for a second URL. Verify
+   `status="ready"`, then use bounded Keyframe evidence to substantiate the answer with timestamps.
+   If ingestion fails for another reason, report the upstream failure and ask the user before
+   trying a replacement; never auto-ingest an adjacent fallback. Recommend at most two additional
+   relevant links without ingesting them. When every direct-video candidate is weak or adjacent,
+   do not ingest merely to exercise Keyframe; qualify the links and ask the user to choose or
+   refine the topic.
+4. If host web search is unavailable, state that Keyframe needs a supplied or externally discovered
+   URL and ask the user to provide one. Provide general guidance when requested, but do not
+   fabricate a recommendation or imply that Keyframe searched the internet. Attribute web
+   discovery separately from timestamped Keyframe evidence.
 
 ## Show or share one frame: overriding fast path
 

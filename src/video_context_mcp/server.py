@@ -50,6 +50,26 @@ from video_context_mcp.models import (
 if TYPE_CHECKING:
     from video_context_mcp.service import KeyframeService, VisualPayload
 
+_TOPIC_DISCOVERY_CONTRACT = (
+    "TOPIC DISCOVERY CONTRACT: an explicit Keyframe invocation selects the video-analysis "
+    "capability; it does not make Keyframe the subject or change the ordinary meaning of the "
+    "user's topic. For example, 'build my own processor' means a CPU absent contrary context. "
+    "When no source or ingest receipt exists and the user asks for videos about a topic, use the "
+    "host's normal web search, when available, to find at most three individual public videos "
+    "with direct watch URLs; never pass a course, article, playlist, channel, search-result, or "
+    "product landing page to ingest; "
+    "never add 'Keyframe', 'keyframes', or 'video processor' unless the user asks about them. "
+    "Keyframe does not search the public web. Ingest exactly one leading candidate only when its "
+    "central subject and instructional task strongly match the request. Select only that direct "
+    "URL; the existing actionable duration retry may repeat the same source, but do not make a "
+    "discovery-driven ingest call for a second URL. If ingestion otherwise fails, report the "
+    "failure and ask before trying a replacement. Do not ingest an adjacent or keyword-only result "
+    "merely to use Keyframe. If web "
+    "search is unavailable, disclose that "
+    "Keyframe needs a supplied or externally discovered URL and ask the user to provide one. "
+    "Attribute host discovery separately from timestamped Keyframe evidence."
+)
+
 _SINGLE_IMAGE_RESPONSE_CONTRACT = (
     "SINGLE-IMAGE RESPONSE CONTRACT: only when the user's sole requested deliverable is one "
     "image, before retrieval progress may state the requested retrieval goal, but it must not "
@@ -75,7 +95,8 @@ SERVER_INSTRUCTIONS = (
     "binary image input is omitted or unsupported, the complete next agent message must be only "
     "the exact standalone artifact markup returned by the image result, with no other prose or "
     "metadata; then stop. For multi-evidence analysis, continue gathering the bounded evidence the "
-    "user requested. Keyframe retrieves timestamped evidence from videos and animated GIFs. "
+    f"user requested. {_TOPIC_DISCOVERY_CONTRACT} Keyframe retrieves timestamped evidence from "
+    "videos and animated GIFs. "
     "These initialization "
     "instructions are common workflow invariants; follow each tool's own title and description "
     "for intent-specific routing and output behavior instead of searching plugin caches or the "
@@ -154,7 +175,9 @@ def create_server(
         name="video_ingest",
         title="Ingest video",
         description=(
-            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} INDEX OR OPEN ONE VIDEO. For a no-vision request "
+            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} {_TOPIC_DISCOVERY_CONTRACT} INDEX OR OPEN ONE "
+            "VIDEO. This tool accepts a concrete source selected by the user or host; it does not "
+            "discover public videos from a topic. For a no-vision request "
             "whose sole deliverable is one image, if the user supplied an exact timestamp or "
             "moment_id, preserve that selector and skip search. Otherwise, for an untimed "
             "physical-action image, use this receipt once, then make exactly one bounded "
@@ -299,7 +322,8 @@ def create_server(
         name="video_search",
         title="Search spoken or on-screen video evidence",
         description=(
-            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} NO-VISION SINGLE-IMAGE ACTION SELECTION: this "
+            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} {_TOPIC_DISCOVERY_CONTRACT} NO-VISION SINGLE-IMAGE "
+            "ACTION SELECTION: this "
             "applies only to an untimed physical-action image request without an exact timestamp "
             "or moment_id; make this the sole search and use "
             "channel='said' inside exact chapter bounds, choose a hit whose context says the "
@@ -308,7 +332,9 @@ def create_server(
             "pass its start_s directly as t to "
             "one video_get_frame call. Never select a title, announcement, or transition and "
             "never inventory moments or read transcript pages for this path. Search what was "
-            "said in transcripts, what was shown in OCR, or both. The literal "
+            "said in transcripts, what was shown in OCR, or both. With video_id omitted this "
+            "searches only the existing local Keyframe library; it is never public-web or YouTube "
+            "discovery. The literal "
             "combined channel is channel='all', never 'both'. Optional start_s/end_s bounds "
             "form a half-open [start_s, end_s) evidence window. "
             "For an on-screen identity linked to narration, locate the said interval first, then "
