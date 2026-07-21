@@ -523,6 +523,7 @@ def _install_fake_ydl(
     *,
     download_result: dict[str, Any] | None = None,
     downloaded_has_audio: bool = True,
+    downloaded_duration_s: float | None = None,
 ) -> list[tuple[dict[str, Any], bool]]:
     calls: list[tuple[dict[str, Any], bool]] = []
 
@@ -550,7 +551,14 @@ def _install_fake_ydl(
     monkeypatch.setattr(
         acquisition,
         "_probe_downloaded_media",
-        lambda *_args, **_kwargs: downloaded_has_audio,
+        lambda *_args, **_kwargs: acquisition._DownloadedMediaProbe(
+            duration_s=(
+                float(metadata["duration"])
+                if downloaded_duration_s is None
+                else downloaded_duration_s
+            ),
+            has_audio=downloaded_has_audio,
+        ),
     )
     return calls
 
@@ -630,9 +638,7 @@ def test_remote_audio_capability_is_preserved(
     acquired = acquire_remote(f"https://{PUBLIC_IP}/animation.gif", settings)
 
     assert acquired.metadata.has_audio is False
-    assert calls[1][0]["format"] == (
-        "bestvideo[height<=360]/best[height<=360]/worstvideo/worst"
-    )
+    assert calls[1][0]["format"] == ("bestvideo[height<=360]/best[height<=360]/worstvideo/worst")
     acquired.cleanup()
 
 
@@ -705,6 +711,92 @@ def test_video_only_probe_does_not_erase_source_audio_metadata(
     acquired.cleanup()
 
 
+def test_downloaded_media_duration_overrides_stale_provider_duration(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    info = _remote_info(
+        duration=585.0,
+        chapters=[
+            {"start_time": 0, "end_time": 100, "title": "Kept"},
+            {"start_time": 220, "end_time": 500, "title": "Clipped"},
+            {"start_time": 300, "end_time": 500, "title": "Removed"},
+        ],
+    )
+    _install_fake_ydl(
+        monkeypatch,
+        info,
+        downloaded_duration_s=232.46,
+    )
+
+    acquired = acquire_remote(
+        f"https://{PUBLIC_IP}/video",
+        settings,
+        mode="fast",
+        transcript_mode="none",
+    )
+
+    assert acquired.metadata.duration_s == pytest.approx(232.46)
+    assert [(chapter.start_s, chapter.end_s) for chapter in acquired.chapters] == [
+        (0, 100),
+        (220, 232.46),
+    ]
+    assert any(
+        "using the measured 232.5s media duration instead of 585.0s" in warning
+        for warning in acquired.warnings
+    )
+    acquired.cleanup()
+
+
+@pytest.mark.parametrize(
+    ("track_field", "expected_origin"),
+    [
+        ("subtitles", "captions"),
+        ("automatic_captions", "automatic_captions"),
+    ],
+)
+def test_measured_media_duration_bounds_manual_and_automatic_captions(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    track_field: str,
+    expected_origin: str,
+) -> None:
+    subtitle_url = f"https://{PUBLIC_IP}/{expected_origin}.vtt"
+    info = _remote_info(
+        duration=585.0,
+        **{track_field: {"en": [{"ext": "vtt", "url": subtitle_url}]}},
+    )
+    _install_fake_ydl(
+        monkeypatch,
+        info,
+        downloaded_duration_s=232.46,
+    )
+    monkeypatch.setattr(
+        acquisition,
+        "_open_validated_subtitle",
+        lambda *_args, **_kwargs: _FakeResponse(
+            subtitle_url,
+            (
+                b"WEBVTT\n\n"
+                b"00:03:40.000 --> 00:04:00.000\nClip this cue\n\n"
+                b"00:05:00.000 --> 00:05:10.000\nRemove this cue\n"
+            ),
+        ),
+    )
+
+    acquired = acquire_remote(
+        f"https://{PUBLIC_IP}/video",
+        settings,
+        transcript_mode="captions",
+    )
+
+    assert [(cue.start_s, cue.end_s, cue.text, cue.origin) for cue in acquired.transcript] == [
+        (220.0, 232.46, "Clip this cue", expected_origin)
+    ]
+    assert any("clipped 1 cue(s) and removed 1 cue(s)" in warning for warning in acquired.warnings)
+    acquired.cleanup()
+
+
 @pytest.mark.parametrize("has_audio", [False, True])
 def test_downloaded_media_probe_returns_audio_stream_presence(
     tmp_path: Path,
@@ -717,9 +809,10 @@ def test_downloaded_media_probe_returns_audio_stream_presence(
     probe = _probe_document(duration="42", audio=has_audio)
     monkeypatch.setattr(acquisition, "_run_json_command", lambda *_args, **_kwargs: probe)
 
-    assert (
-        acquisition._probe_downloaded_media(media, settings, max_duration_s=60) is has_audio
-    )
+    result = acquisition._probe_downloaded_media(media, settings, max_duration_s=60)
+
+    assert result.duration_s == 42
+    assert result.has_audio is has_audio
 
 
 def test_downloaded_media_probe_keeps_duration_drift_tolerance_then_guides_retry(
@@ -735,7 +828,9 @@ def test_downloaded_media_probe_keeps_duration_drift_tolerance_then_guides_retry
         "_run_json_command",
         lambda *_args, **_kwargs: _probe_document(duration="61", audio=True),
     )
-    assert acquisition._probe_downloaded_media(media, settings, max_duration_s=60) is True
+    result = acquisition._probe_downloaded_media(media, settings, max_duration_s=60)
+    assert result.duration_s == 61
+    assert result.has_audio is True
 
     monkeypatch.setattr(
         acquisition,

@@ -83,6 +83,40 @@ _SINGLE_IMAGE_RESPONSE_CONTRACT = (
     "bullet, timestamp/provenance line, OCR, caveat, or invitation."
 )
 
+_MULTI_EVIDENCE_BUDGET_CONTRACT = (
+    "MULTI-EVIDENCE SYNTHESIS BUDGET: for a task that combines multiple claims or evidence "
+    "types, after one ready fast ingest use at most one routing moment page "
+    "per index generation, four searches, two transcript calls, and four combined visual "
+    "retrieval calls. Balanced tasks use at most two visual calls; "
+    "accuracy tasks may use four. Exact transcript calls must follow search and span no more "
+    "than 180 seconds. Direct transcript/export requests and compact whole-video summaries "
+    "instead follow their tool-specific pagination and compact-view rules. Reuse each result "
+    "across claims. If fast evidence cannot "
+    "settle the task, upgrade before spending more visual calls; never exhaust probe candidates "
+    "and then repeat the scan in full mode. BEFORE/AFTER VISUAL PAIRS (multi-evidence only): "
+    "for a requested application, behavior, layout, or UI-state comparison, reserve two of the "
+    "existing four visual calls for distinct before and corresponding later after state images. "
+    "An implementation crop cannot substitute for either requested state. If both results resolve "
+    "to the same actual timestamp or rendered image, the second is duplicate evidence and does not "
+    "satisfy the pair. Make comparison calls sequentially, checking actual timestamp and rendered-"
+    "image identity before spending the next call; never submit duplicate or equivalent candidates "
+    "concurrently. A later image qualifies only when it visibly establishes the requested changed "
+    "state, not merely because it is later or shows a non-overlapping alternate layout. Locate a "
+    "distinct bounded candidate within the existing ceiling or label that state unverified. Do "
+    "not spend a visual call on an issue, ticket, specification, or title when its text is already "
+    "available through bounded OCR search or a moment summary. For a stacking or foreground claim, "
+    "the after image must show the same overlapping elements with their visible foreground or "
+    "occlusion order changed. Never infer a requested visual state from issue text, OCR, "
+    "implementation code, or a duplicate static view."
+)
+
+_VISUAL_DUPLICATE_CONTRACT = (
+    "VISUAL DEDUPLICATION: a code crop and full frame of the same retained image count as two "
+    "calls even when requested through different selectors. Do not reuse its returned moment_id, "
+    "requested_t, actual_t, or a nearby equivalent selector unless both images are indispensable "
+    "to separate claims."
+)
+
 SERVER_INSTRUCTIONS = (
     "SINGLE-IMAGE SAFETY: for a request whose sole deliverable is one image, pre-retrieval "
     "progress may state the requested retrieval goal, but it must not claim that an uninspected "
@@ -95,7 +129,8 @@ SERVER_INSTRUCTIONS = (
     "binary image input is omitted or unsupported, the complete next agent message must be only "
     "the exact standalone artifact markup returned by the image result, with no other prose or "
     "metadata; then stop. For multi-evidence analysis, continue gathering the bounded evidence the "
-    f"user requested. {_TOPIC_DISCOVERY_CONTRACT} Keyframe retrieves timestamped evidence from "
+    f"user requested. {_MULTI_EVIDENCE_BUDGET_CONTRACT} {_TOPIC_DISCOVERY_CONTRACT} Keyframe "
+    "retrieves timestamped evidence from "
     "videos and animated GIFs. "
     "These initialization "
     "instructions are common workflow invariants; follow each tool's own title and description "
@@ -175,7 +210,8 @@ def create_server(
         name="video_ingest",
         title="Ingest video",
         description=(
-            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} {_TOPIC_DISCOVERY_CONTRACT} INDEX OR OPEN ONE "
+            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} {_MULTI_EVIDENCE_BUDGET_CONTRACT} "
+            f"{_TOPIC_DISCOVERY_CONTRACT} INDEX OR OPEN ONE "
             "VIDEO. This tool accepts a concrete source selected by the user or host; it does not "
             "discover public videos from a topic. For a no-vision request "
             "whose sole deliverable is one image, if the user supplied an exact timestamp or "
@@ -264,7 +300,7 @@ def create_server(
             "source cues for quotations; view='compact' de-overlaps rolling automatic captions "
             "and returns deterministic 60-second blocks for efficient summaries. Optional "
             "start_s/end_s bounds form a half-open [start_s, end_s) window. The default page "
-            "limit is the maximum 200."
+            f"limit is the maximum 200. {_MULTI_EVIDENCE_BUDGET_CONTRACT}"
         ),
         annotations=READ_ANNOTATIONS,
         structured_output=True,
@@ -322,7 +358,8 @@ def create_server(
         name="video_search",
         title="Search spoken or on-screen video evidence",
         description=(
-            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} {_TOPIC_DISCOVERY_CONTRACT} NO-VISION SINGLE-IMAGE "
+            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} {_MULTI_EVIDENCE_BUDGET_CONTRACT} "
+            f"{_TOPIC_DISCOVERY_CONTRACT} NO-VISION SINGLE-IMAGE "
             "ACTION SELECTION: this "
             "applies only to an untimed physical-action image request without an exact timestamp "
             "or moment_id; make this the sole search and use "
@@ -406,7 +443,7 @@ def create_server(
             "interval. "
             "Probe pages are sparse and partial; full-mode pages have broader stable-scene "
             "coverage. The result reports visual_coverage and does not attach images. Kind and "
-            "OCR confidence are heuristic."
+            f"OCR confidence are heuristic. {_MULTI_EVIDENCE_BUDGET_CONTRACT}"
         ),
         annotations=READ_ANNOTATIONS,
         structured_output=True,
@@ -449,7 +486,12 @@ def create_server(
             "CODE OR TERMINAL CONTENT ONLY. Reconstruct source code or terminal text from a "
             "retained code/terminal moment or timestamp. Provide exactly one of moment_id or t. "
             "The result includes language, parsing, confidence, notes, its source crop, and the "
-            "three temporary render fields. Preserve uncertainty when parsing or OCR is weak."
+            "three temporary render fields. Its attached source crop is already visual evidence; "
+            "do not retrieve its returned moment_id, requested_t, actual_t, or a nearby "
+            "equivalent retained image with another visual tool unless it supports a separate "
+            "indispensable claim. Preserve "
+            f"uncertainty when parsing or OCR is weak. "
+            f"{_MULTI_EVIDENCE_BUDGET_CONTRACT}"
         ),
         annotations=READ_ANNOTATIONS,
     )
@@ -479,8 +521,9 @@ def create_server(
         name="video_get_frame",
         title="Show or share a video photo, screenshot, still, or frame",
         description=(
-            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} SHOW OR SHARE VIDEO IMAGES. Use this tool for "
-            "every general photo, screenshot, still, "
+            f"{_SINGLE_IMAGE_RESPONSE_CONTRACT} {_MULTI_EVIDENCE_BUDGET_CONTRACT} "
+            f"{_VISUAL_DUPLICATE_CONTRACT} SHOW OR SHARE VIDEO IMAGES. Use this tool for every "
+            "general photo, screenshot, still, "
             "hardware/object view, demonstrated physical action, or video-frame request. "
             "NO-VISION UNTIMED PHYSICAL-ACTION RULE: call this exactly once after one said search, use that "
             "action hit's start_s as t, region='full', and quality='auto'; never fetch a title or "

@@ -134,6 +134,14 @@ class SourceMetadata:
     availability: Availability = "public"
 
 
+@dataclass(frozen=True, slots=True)
+class _DownloadedMediaProbe:
+    """Authoritative facts measured from the bytes Keyframe will process."""
+
+    duration_s: float
+    has_audio: bool
+
+
 @dataclass(slots=True)
 class AcquiredSource:
     """A validated source and any temporary media owned by Keyframe.
@@ -208,8 +216,7 @@ def _duration_limit_error(
     required_limit_s = math.ceil(duration_s)
     label = "Downloaded video" if downloaded else "Video"
     prefix = (
-        f"{label} duration is {duration_s:.1f}s, above the configured "
-        f"{configured_limit_s}s limit."
+        f"{label} duration is {duration_s:.1f}s, above the configured {configured_limit_s}s limit."
     )
     if required_limit_s <= MAX_CONFIGURABLE_DURATION_S:
         return SourceError(
@@ -1396,6 +1403,28 @@ def _chapters(info: Mapping[str, Any], *, duration: float) -> tuple[Chapter, ...
     return tuple(sorted(chapters, key=lambda chapter: (chapter.start_s, chapter.end_s)))
 
 
+def _bound_transcript_to_duration(
+    transcript: tuple[TranscriptSegment, ...],
+    *,
+    duration: float,
+) -> tuple[tuple[TranscriptSegment, ...], int, int]:
+    """Drop cues after EOF and clamp cues that cross the measured media boundary."""
+
+    bounded: list[TranscriptSegment] = []
+    clipped = 0
+    removed = 0
+    for segment in transcript:
+        if segment.start_s >= duration:
+            removed += 1
+            continue
+        end_s = min(segment.end_s, duration)
+        if end_s < segment.end_s:
+            clipped += 1
+            segment = replace(segment, end_s=end_s)
+        bounded.append(segment)
+    return tuple(bounded), clipped, removed
+
+
 def _remote_metadata(
     source: str,
     kind: SourceKind,
@@ -1559,7 +1588,7 @@ def _probe_downloaded_media(
     settings: Settings,
     *,
     max_duration_s: int,
-) -> bool:
+) -> _DownloadedMediaProbe:
     probe = _run_json_command(
         [
             settings.ffprobe_executable,
@@ -1597,7 +1626,10 @@ def _probe_downloaded_media(
         raise SourceError("ffprobe could not determine a positive downloaded-media duration.")
     if duration > max_duration_s + 1:
         raise _duration_limit_error(duration, max_duration_s, downloaded=True)
-    return any(item.get("codec_type") == "audio" for item in streams)
+    return _DownloadedMediaProbe(
+        duration_s=duration,
+        has_audio=any(item.get("codec_type") == "audio" for item in streams),
+    )
 
 
 def acquire_remote(
@@ -1629,7 +1661,10 @@ def acquire_remote(
     info = _extract_remote_info(validated_source, settings, refresh=refresh)
     if kind is SourceKind.DIRECT:
         _validate_reported_direct_urls(info, settings)
-    duration = _validate_remote_info(info, settings, max_duration_s=limit)
+    # Provider duration remains a conservative pre-download guard. Some providers retain
+    # pre-edit duration metadata, so ffprobe's downloaded-media duration becomes authoritative
+    # for every downstream timeline after the bounded download succeeds.
+    reported_duration = _validate_remote_info(info, settings, max_duration_s=limit)
     warnings: list[str] = []
     transcript: tuple[TranscriptSegment, ...] = ()
 
@@ -1695,32 +1730,54 @@ def acquire_remote(
         _validate_remote_info(downloaded_info, settings, max_duration_s=limit)
         if kind is SourceKind.DIRECT:
             _validate_reported_direct_urls(downloaded_info, settings)
-        downloaded_has_audio = _probe_downloaded_media(
+        downloaded_probe = _probe_downloaded_media(
             media_path,
             settings,
             max_duration_s=limit,
         )
-        metadata = _remote_metadata(validated_source, kind, info, duration=duration)
+        downloaded_duration = downloaded_probe.duration_s
+        if abs(downloaded_duration - reported_duration) > max(1.0, reported_duration * 0.01):
+            warnings.append(
+                "The provider-reported duration differed from the downloaded media; "
+                f"using the measured {downloaded_duration:.1f}s media duration instead of "
+                f"{reported_duration:.1f}s."
+            )
+        transcript, clipped_cues, removed_cues = _bound_transcript_to_duration(
+            transcript,
+            duration=downloaded_duration,
+        )
+        if clipped_cues or removed_cues:
+            warnings.append(
+                "Caption timestamps extended beyond the downloaded media; "
+                f"clipped {clipped_cues} cue(s) and removed {removed_cues} cue(s) after the "
+                f"measured {downloaded_duration:.1f}s endpoint."
+            )
+        metadata = _remote_metadata(
+            validated_source,
+            kind,
+            info,
+            duration=downloaded_duration,
+        )
         # A probe_video download may intentionally omit source audio to save bandwidth,
         # so a silent probe cannot disprove yt-dlp's source-level audio metadata. AV
         # profiles are expected to preserve audio and their probed stream list is
         # authoritative in both directions.
         authoritative_has_audio = (
-            metadata.has_audio or downloaded_has_audio
+            metadata.has_audio or downloaded_probe.has_audio
             if profile == "probe_video"
-            else downloaded_has_audio
+            else downloaded_probe.has_audio
         )
         metadata = replace(metadata, has_audio=authoritative_has_audio)
 
         return AcquiredSource(
             metadata=metadata,
             transcript=transcript,
-            chapters=_chapters(info, duration=duration),
+            chapters=_chapters(info, duration=downloaded_duration),
             media_path=media_path,
             warnings=tuple(warnings),
             owns_media=media_path is not None,
             media_profile=profile,
-            media_contains_audio=downloaded_has_audio,
+            media_contains_audio=downloaded_probe.has_audio,
             _temp_dir=temp_dir,
         )
     except BaseException as exc:

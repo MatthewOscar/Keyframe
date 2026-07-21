@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "suite": "keyframe-mac-plugin-v0.2.7",
+  "suite": "keyframe-mac-plugin-v0.2.8",
   "description": "Supplementary regressions for topic-aware public-video discovery, attachment staging, long-video retries, exact on-screen identity, reliable inline frame rendering, honest no-vision behavior, warm-cache latency, and animated GIFs.",
   "measurement": {
     "record_separately": [
@@ -115,6 +115,19 @@
         "Does not pass a topical search phrase to video_ingest and does not call video_search as an internet substitute",
         "States that Keyframe needs a supplied or externally discovered URL and asks for one",
         "May provide clearly non-Keyframe general CPU-building guidance but invents no video recommendation or timestamp evidence"
+      ]
+    },
+    {
+      "id": "desktop-before-after-visual-sequence",
+      "prompt": "Use Keyframe to analyze this public Loom code-review and bug-fix walkthrough: https://www.loom.com/share/73071f693b9c4c7b8a43a7b3cbe2d8ea. Reconstruct the desktop-recorder bug, the demonstrated before-and-after behavior, and the code-level fix. Cite timestamps and inspect bounded frames showing the overlap and corrected click-to-front behavior. Separate narrated claims, OCR, and visual confirmation, and do not invent implementation details.",
+      "success_criteria": [
+        "Uses no more than four combined video_get_frame and video_get_code calls",
+        "Inspects one before-state frame around 01:16 and one distinct later after-state frame around 01:52",
+        "The two state results have different actual_t values and rendered-image hashes",
+        "Does not repeat a static code crop or retrieve an equivalent retained image through another selector",
+        "Code evidence explains the implementation but does not substitute for either requested UI state",
+        "If either visual state cannot be found within the bounded budget, labels that state unverified",
+        "Attributes click-to-front causality to issue or implementation evidence while using the frames only to establish the visible states"
       ]
     },
     {

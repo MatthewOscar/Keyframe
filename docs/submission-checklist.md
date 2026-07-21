@@ -40,7 +40,10 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
 - [x] Commit and push v0.2.6 to `main`, then confirm the full CI matrix.
 - [x] Review the v0.2.7 topic-aware discovery correction and pass the local
       release gate.
-- [ ] Commit and push v0.2.7 to `main`, then confirm the full CI matrix.
+- [x] Commit and push v0.2.7 to `main`, then confirm the full CI matrix.
+- [x] Review the v0.2.8 duration-reconciliation and bounded-retrieval corrections
+      and pass the local release gate.
+- [ ] Commit and push v0.2.8 to `main`, then confirm the full CI matrix.
 - [x] Create and push immutable tag `v0.1.0`.
 - [x] Create and push the verified agent-efficiency release tag `v0.1.3`.
 - [x] Create the PyPI project, configure Trusted Publishing, and publish the
@@ -61,8 +64,10 @@ Last verified against the [official rules](https://openai.devpost.com/rules) on
       then confirm its PyPI and GitHub releases complete successfully.
 - [x] Create and push the no-vision response-contract correction release tag
       `v0.2.6`, then confirm its PyPI and GitHub releases complete successfully.
-- [ ] Create and push the topic-aware discovery correction release tag
+- [x] Create and push the topic-aware discovery correction release tag
       `v0.2.7`, then confirm its PyPI and GitHub releases complete successfully.
+- [ ] Create and push the duration-reconciliation and bounded-retrieval release
+      tag `v0.2.8`, then confirm its PyPI and GitHub releases complete successfully.
 - [ ] Install the tagged plugin in Codex and ChatGPT desktop and run the
       headline flow with Codex visibly configured to `gpt-5.6`.
 - [ ] Smoke-install the tagged release in Claude Code, Cursor, and Agy; approve

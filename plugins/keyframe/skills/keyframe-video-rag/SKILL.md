@@ -133,6 +133,42 @@ extract.
 6. Never let a generic request to summarize a long video become an exhaustive
    transcript or frame scan merely because the video contains a demonstration.
 
+## Use a fixed multi-evidence budget
+
+1. For multi-evidence synthesis that combines multiple claims or evidence types, after one ready
+   fast ingest use at most one routing moment page per index generation, four searches, two
+   transcript calls, and four combined visual calls across `video_get_frame` and
+   `video_get_code`. Balanced tasks use no more than two visual calls; accuracy tasks may use four.
+   An exact transcript call must follow search and span no more than 180 seconds. Direct
+   transcript/export requests and compact whole-video summaries instead follow their tool-specific
+   pagination and compact-view rules.
+2. Plan the claims before retrieval. Batch related terms into a small number of searches and reuse
+   each transcript, frame, or code result across every claim it supports. Never fetch one image per
+   bullet when one or two representative images plus transcript evidence settle the distinction.
+3. If fast evidence cannot settle the task, perform the one full upgrade before spending more
+   visual calls. Never exhaust probe candidates and then repeat the same scan in full mode.
+4. A full index permits one additional targeted moment page, normally with `limit<=20`; it does not
+   reset the four-search, two-transcript, or four-visual-call task budgets.
+5. A code crop and full frame of the same retained image consume two visual calls even when they
+   were requested through different selectors. Do not reuse a result's `moment_id`, `requested_t`,
+   `actual_t`, or a nearby equivalent selector. Choose the crop for exact code or the full frame
+   for UI/layout; retrieve both only when each is indispensable to a separate claim.
+6. For an explicit before/after application, behavior, layout, or UI-state comparison, reserve two
+   of the task-wide four visual calls: one distinct `video_get_frame` result for the before state
+   and one result from the corresponding later after-state episode. Use `video_get_code` only from
+   the remaining budget; its crop cannot substitute for either requested application/UI state.
+   Make the comparison calls sequentially and compare returned `actual_t` plus rendered-image
+   identity before spending the next call; never submit duplicate or equivalent candidates
+   concurrently. If both state calls resolve to the same timestamp or image, the second is duplicate
+   evidence and does not satisfy the pair. A later image qualifies only when it visibly establishes
+   the requested changed state, not merely because it is later or shows a non-overlapping alternate
+   layout. Locate a distinct bounded candidate within the existing four-call ceiling, or label the
+   missing state unverified. Do not spend a visual call on an issue, ticket, specification, or title
+   when its text is already available through bounded OCR search or a moment summary. For a stacking
+   or foreground claim, the after image must show the same overlapping elements with their visible
+   foreground or occlusion order changed. Never infer a requested state from issue text, OCR, code,
+   or a duplicate static view.
+
 ## Decide visual depth
 
 1. Except for the overriding show/share fast path above, after fast ingestion call
@@ -192,7 +228,8 @@ extract.
    Treat kind, language, stability, OCR confidence, and parse status as
    heuristics.
 6. After full ingestion, retrieve only the few moments needed to support the
-   answer. Two to four well-chosen frames are normally enough.
+   answer. Two to four well-chosen frames are normally enough, and four combined frame/code calls
+   is the task-wide ceiling.
 7. Treat every `next_cursor` as opaque. Copy it byte-for-byte from the
    immediately preceding response and keep the scope-defining arguments
    unchanged: transcript `video_id`/`start_s`/`end_s`; search
@@ -249,7 +286,8 @@ extract.
    unchanged `moment_id` returned by shown search or moment listing for a known
    candidate. For a probe gap or exact narrated timestamp, use `t` with
    `quality="auto"`; inspect the reported `evidence_quality` and `actual_t`.
-3. Inspect at most two distinct candidates. Never retrieve the same `moment_id`
+3. Inspect at most two distinct candidates for any one visual decision and at most four combined
+   frame/code results across the entire multi-evidence task. Never retrieve the same `moment_id`
    or timestamp twice, and never request `quality="source"` for a remote video.
 4. For a request to show or share a photo, screenshot, still, or frame, copy the
    selected result's `render_markdown` byte-for-byte into the response,

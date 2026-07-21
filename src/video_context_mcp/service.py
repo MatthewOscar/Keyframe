@@ -845,7 +845,13 @@ class KeyframeService:
                 classification_confidence=moment.classification_confidence,
                 kind=moment.kind,
                 visual_coverage=video.visual_coverage,
-                notes=moment.notes,
+                notes=(
+                    *moment.notes,
+                    "The attached source crop is already visual evidence; do not retrieve its "
+                    "returned moment_id, requested_t, actual_t, or a nearby equivalent frame "
+                    "with another visual tool unless each result is indispensable to a separate "
+                    "claim.",
+                ),
                 render_path=str(render.path),
                 render_markdown=render.markdown,
                 render_expires_at=render.expires_at,

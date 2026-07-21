@@ -234,14 +234,13 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "at most three individual public" in contents[0]
     assert "direct watch URL for one public video" in contents[0]
     assert "product landing page is not an ingest candidate" in contents[0]
-    assert '`video_search` without a `video_id` searches only' in contents[0]
+    assert "`video_search` without a `video_id` searches only" in contents[0]
     assert "Keyword overlap, a passing mention, or an adjacent technology" in contents[0]
     assert "duration-guard retry may repeat the same source" in contents[0]
     assert "ingest call for a second URL" in contents[0]
     assert "never auto-ingest an adjacent fallback" in contents[0]
     assert (
-        "When every direct-video candidate is weak or adjacent, do not ingest"
-        in normalized_skill
+        "When every direct-video candidate is weak or adjacent, do not ingest" in normalized_skill
     )
     assert "ask the user to provide one" in normalized_skill
     assert "Attribute web discovery separately" in normalized_skill
@@ -259,6 +258,24 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     assert "Add no prefix, suffix, bullet, timestamp/provenance line" in contents[0]
     assert "Use when Codex must understand" not in contents[0]
     assert "For each source, make at most one successful fast ingest" in contents[0]
+    assert "Use a fixed multi-evidence budget" in contents[0]
+    assert "four combined visual calls across `video_get_frame` and" in contents[0]
+    assert "Balanced tasks use no more than two visual calls" in contents[0]
+    assert (
+        "exact transcript call must follow search and span no more than 180 seconds" in contents[0]
+    )
+    assert "Direct\n   transcript/export requests and compact whole-video summaries" in contents[0]
+    assert "code crop and full frame of the same retained image consume two" in contents[0]
+    assert "reserve two of the task-wide four visual calls" in normalized_skill
+    assert "cannot substitute for either requested application/UI state" in contents[0]
+    assert "same timestamp or image" in normalized_skill
+    assert "never submit duplicate or equivalent candidates concurrently" in normalized_skill
+    assert "later image qualifies only when it visibly establishes" in contents[0]
+    assert "label the missing state unverified" in normalized_skill
+    assert "Do not spend a visual call on an issue, ticket, specification, or title" in contents[0]
+    assert "same overlapping elements with their visible foreground" in normalized_skill
+    assert "Never exhaust probe candidates and then repeat the same scan" in contents[0]
+    assert "does not\n   reset the four-search, two-transcript" in contents[0]
     assert "Do not split, restage, or reconstruct the source" in contents[0]
     assert "Skip generic search for a whole-video summary" in contents[0]
     assert 'Map explicit requests for "quick," "fast," "overview," or "gist"' in contents[0]
@@ -321,6 +338,17 @@ def test_project_and_plugin_workflow_skills_stay_identical_and_client_neutral() 
     server_source = (ROOT / "src/video_context_mcp/server.py").read_text(encoding="utf-8")
     assert "Ingest each source with mode='fast' once" in server_source
     assert "one mode='full' upgrade per source" in server_source
+    assert "MULTI-EVIDENCE SYNTHESIS BUDGET" in server_source
+    assert "four searches, two transcript calls, and four combined visual" in server_source
+    assert "Exact transcript calls must follow search" in server_source
+    assert "Direct transcript/export requests and compact whole-video summaries" in server_source
+    assert "BEFORE/AFTER VISUAL PAIRS (multi-evidence only)" in server_source
+    assert "Make comparison calls sequentially" in server_source
+    assert "later image qualifies only when it visibly establishes" in server_source
+    assert "not spend a visual call on an issue, ticket, specification" in server_source
+    assert "same overlapping elements with their visible foreground" in server_source
+    assert "code crop and full frame of the same retained image" in server_source
+    assert "never exhaust probe candidates" in server_source
     assert "do not split or restage the source" in server_source
     assert "exact structured video_id byte-for-byte" in server_source
     assert "instead of searching plugin caches" in server_source
@@ -454,9 +482,7 @@ def test_release_version_is_synchronized_across_runtime_lock_evals_and_docs() ->
     )
     assert root_package["version"] == PACKAGE_VERSION
 
-    assert _load(ROOT / "evals" / "cases.json")["suite"] == (
-        f"keyframe-v{PACKAGE_VERSION}"
-    )
+    assert _load(ROOT / "evals" / "cases.json")["suite"] == (f"keyframe-v{PACKAGE_VERSION}")
     assert _load(ROOT / "evals" / "mac-plugin-cases.json")["suite"] == (
         f"keyframe-mac-plugin-v{PACKAGE_VERSION}"
     )

@@ -317,7 +317,10 @@ def test_exact_tool_surface_and_annotations() -> None:
         "every untimed no-vision single-image physical-action share"
         in tools["video_search"].parameters["properties"]["channel"]["description"]
     )
-    assert "progress update may state the requested retrieval goal" in tools["video_get_frame"].description
+    assert (
+        "progress update may state the requested retrieval goal"
+        in tools["video_get_frame"].description
+    )
     assert transcript_tool.description.startswith(
         "NOT FOR AN UNTIMED NO-VISION PHYSICAL-ACTION IMAGE REQUEST"
     )
@@ -381,6 +384,8 @@ def test_exact_tool_surface_and_annotations() -> None:
     assert "photo" not in tools["video_get_code"].description.lower()
     assert "screenshot" not in tools["video_get_code"].description.lower()
     assert "frame" not in tools["video_get_code"].description.lower()
+    assert "attached source crop is already visual evidence" in tools["video_get_code"].description
+    assert "returned moment_id, requested_t, actual_t" in tools["video_get_code"].description
     assert {"render_path", "render_markdown", "render_expires_at"} <= code_output.keys()
     search_hit_schema = tools["video_search"].output_schema["$defs"]["SearchHit"]
     assert "context" in search_hit_schema["properties"]
@@ -405,9 +410,9 @@ def test_exact_tool_surface_and_annotations() -> None:
 def test_exact_frame_selector_skips_search_in_direct_server_guidance() -> None:
     server = create_server(FakeService())
     tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
-    ingest_guidance = tools["video_ingest"].output_schema["properties"][
-        "retrieval_guidance"
-    ]["default"]
+    ingest_guidance = tools["video_ingest"].output_schema["properties"]["retrieval_guidance"][
+        "default"
+    ]
 
     for guidance in (
         server_module._SINGLE_IMAGE_RESPONSE_CONTRACT,
@@ -422,9 +427,9 @@ def test_exact_frame_selector_skips_search_in_direct_server_guidance() -> None:
 def test_markdown_only_final_is_scoped_to_a_sole_image_deliverable() -> None:
     server = create_server(FakeService())
     tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
-    frame_markdown = tools["video_get_frame"].output_schema["properties"][
-        "render_markdown"
-    ]["description"]
+    frame_markdown = tools["video_get_frame"].output_schema["properties"]["render_markdown"][
+        "description"
+    ]
 
     for guidance in (server_module._SINGLE_IMAGE_RESPONSE_CONTRACT, frame_markdown):
         normalized = " ".join(guidance.lower().split())
@@ -436,13 +441,47 @@ def test_markdown_only_final_is_scoped_to_a_sole_image_deliverable() -> None:
 
 def test_direct_frame_metadata_limits_vision_candidate_retrieval() -> None:
     server = create_server(FakeService())
-    frame_description = {
-        tool.name: tool for tool in server._tool_manager.list_tools()
-    }["video_get_frame"].description
+    frame_description = {tool.name: tool for tool in server._tool_manager.list_tools()}[
+        "video_get_frame"
+    ].description
 
     for guidance in (server.instructions, frame_description):
         assert "image-capable model may inspect at most two distinct candidates" in guidance
         assert "Never retrieve the same moment_id or timestamp twice" in guidance
+
+
+def test_server_metadata_exposes_multi_evidence_call_budget() -> None:
+    server = create_server(FakeService())
+    tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
+
+    for guidance in (
+        server.instructions,
+        tools["video_ingest"].description,
+        tools["video_get_transcript"].description,
+        tools["video_search"].description,
+        tools["video_list_moments"].description,
+        tools["video_get_code"].description,
+        tools["video_get_frame"].description,
+    ):
+        assert "MULTI-EVIDENCE SYNTHESIS BUDGET" in guidance
+        assert "four searches, two transcript calls" in guidance
+        assert "four combined visual retrieval calls" in guidance
+        assert "Exact transcript calls must follow search" in guidance
+        assert "Direct transcript/export requests" in guidance
+        assert "BEFORE/AFTER VISUAL PAIRS (multi-evidence only)" in guidance
+        assert "two of the existing four visual calls" in guidance
+        assert "implementation crop cannot substitute" in guidance
+        assert "Make comparison calls sequentially" in guidance
+        assert "later image qualifies only when it visibly establishes" in guidance
+        assert "Do not spend a visual call on an issue, ticket, specification" in guidance
+        assert "same overlapping elements with their visible foreground" in guidance
+        assert "within the existing ceiling" in guidance
+        assert "never exhaust probe candidates" in guidance
+
+    frame_guidance = tools["video_get_frame"].description
+    assert "VISUAL DEDUPLICATION" in frame_guidance
+    assert "code crop and full frame of the same retained image" in frame_guidance
+    assert "returned moment_id, requested_t, actual_t" in frame_guidance
 
 
 @pytest.mark.asyncio

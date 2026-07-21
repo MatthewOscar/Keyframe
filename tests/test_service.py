@@ -877,9 +877,7 @@ def test_auto_caption_cache_satisfies_explicit_caption_request(tmp_path: Path) -
     assert automatic.has_transcript is True
     assert explicit_captions.cache_hit is True
     assert explicit_captions.video_id == automatic.video_id
-    assert service.store.transcript_sources(automatic.video_id) == frozenset(
-        {"automatic_captions"}
-    )
+    assert service.store.transcript_sources(automatic.video_id) == frozenset({"automatic_captions"})
     assert len(calls) == 1
 
 
@@ -1350,6 +1348,13 @@ def test_get_code_requires_exactly_one_selector_and_rejects_non_code_moments(
         f"![Keyframe frame at 00:02](<{Path(selected.result.render_path).as_posix()}>)"
     )
     assert selected.result.render_expires_at.endswith("+00:00")
+    assert any(
+        "attached source crop is already visual evidence" in note for note in selected.result.notes
+    )
+    assert any(
+        "returned moment_id, requested_t, actual_t" in note for note in selected.result.notes
+    )
+    assert any("nearby equivalent frame" in note for note in selected.result.notes)
 
 
 def test_get_frame_round_trips_an_exact_moment_and_keeps_timestamp_compatibility(
